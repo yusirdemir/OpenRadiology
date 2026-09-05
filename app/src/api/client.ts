@@ -291,8 +291,14 @@ export const api = {
       { path, lang },
     ),
 
-  attest: (workDir: string, events: ViewEventPayload[]) =>
-    post<{ accepted: number; rejected: { reason: string }[] }>("/attest", { work_dir: workDir, events }),
+  attest: (workDir: string, events: ViewEventPayload[], sessionPath?: string) =>
+    post<{
+      accepted: number;
+      rejected: { reason: string }[];
+      promoted?: string[];
+      refused_reviews?: { path: string; reason: string }[];
+      coverage?: AttestationCoverage;
+    }>("/attest", { work_dir: workDir, events, ...(sessionPath ? { session: sessionPath } : {}) }),
   coverage: (sessionPath: string) =>
     get<AttestationCoverage>(`/attest/coverage?session=${encodeURIComponent(sessionPath)}`),
 

@@ -10,7 +10,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../api/client";
-import type { Claim, LocaleBundle, MeasureResult, Ref, SessionStudy, SliceImage } from "../api/types";
+import type { Claim, LocaleBundle, MeasureResult, Ref, SessionPage, SessionStudy, SliceImage } from "../api/types";
 import { AttestationTracker } from "../lib/attestation";
 import { SliceSourcePool } from "../lib/sliceCache";
 import { useConnection } from "../state/connection";
@@ -20,6 +20,8 @@ import { AgentPanel } from "./AgentPanel";
 import { CompareBar } from "./CompareBar";
 import { EvidencePanel } from "./EvidencePanel";
 import { Filmstrip } from "./Filmstrip";
+import { PageViewer } from "./PageViewer";
+import { RenderDialog } from "./RenderDialog";
 import { RegionRail } from "./RegionRail";
 import { SliceCanvas, type CanvasMarker } from "./SliceCanvas";
 import { Toolbar } from "./Toolbar";
@@ -47,6 +49,8 @@ export function Workspace({ locale, onBack, onReport }: Props) {
   const [lastGeometry, setLastGeometry] = useState<{ tool: ToolName; points: PendingPoint[]; sopUid: string; label: string } | null>(null);
   const [images, setImages] = useState<Record<number, SliceImage | null>>({});
   const [agentOpen, setAgentOpen] = useState(false);
+  const [renderOpen, setRenderOpen] = useState(false);
+  const [openPage, setOpenPage] = useState<SessionPage | null>(null);
 
   const pane = viewer.panes[viewer.activePane];
   const image = pane ? images[viewer.activePane] ?? null : null;
@@ -60,9 +64,12 @@ export function Workspace({ locale, onBack, onReport }: Props) {
   if (!tracker.current) {
     tracker.current = new AttestationTracker(
       async (events) => {
-        if (!session?.work_dir) return;
-        await api.attest(session.work_dir, events);
-        void useSession.getState().refreshCoverage();
+        const current = useSession.getState();
+        if (!current.session?.work_dir) return;
+        // The session path travels with the batch so the server can promote
+        // any page whose source slices have now all been displayed.
+        await api.attest(current.session.work_dir, events, current.path ?? undefined);
+        if (current.path) await useSession.getState().open(current.path);
       },
       policy,
     );
@@ -356,6 +363,15 @@ export function Workspace({ locale, onBack, onReport }: Props) {
         </button>
         <button
           type="button"
+          className="btn"
+          title="Bu seriden sistematik kontakt sayfaları üret"
+          onClick={() => setRenderOpen(true)}
+          disabled={!pane?.meta}
+        >
+          Sayfa üret
+        </button>
+        <button
+          type="button"
           className={`btn ${agentOpen ? "btn-active" : ""}`}
           title="MCP köprüsüne bağlı ajanın adımları"
           onClick={() => setAgentOpen((open) => !open)}
@@ -527,6 +543,10 @@ export function Workspace({ locale, onBack, onReport }: Props) {
           onClaimRemove={removeClaim}
           onNewClaimFromMeasurement={claimFromMeasurement}
           onAttachMeasurement={attachMeasurement}
+          pages={session.pages}
+          attestation={useSession.getState().coverage}
+          onOpenPage={setOpenPage}
+          onRender={() => setRenderOpen(true)}
         />
       </aside>
 
@@ -536,6 +556,32 @@ export function Workspace({ locale, onBack, onReport }: Props) {
       {/* The agent panel and its display gate overlay the whole workspace: a
           page the agent asked for has to be looked at, not glanced past. */}
       <AgentPanel open={agentOpen} onClose={() => setAgentOpen(false)} />
+
+      {renderOpen && pane && (
+        <RenderDialog
+          studyPath={pane.studyPath}
+          seriesUid={pane.seriesUid}
+          seriesNumber={seriesNumberOf(pane.seriesUid) ?? pane.seriesUid.slice(-6)}
+          meta={pane.meta}
+          onClose={() => setRenderOpen(false)}
+        />
+      )}
+
+      {openPage && (
+        <PageViewer
+          pagePath={openPage.path}
+          purpose={openPage.purpose}
+          workDir={session.work_dir}
+          sessionPath={sessionPath}
+          onAttested={() => {
+            setOpenPage(null);
+            // The server decides what the attestation is worth; re-opening the
+            // session is how the interface learns whether it counted.
+            if (sessionPath) void useSession.getState().open(sessionPath);
+          }}
+          onDismiss={() => setOpenPage(null)}
+        />
+      )}
     </div>
   );
 }

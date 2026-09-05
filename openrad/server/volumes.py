@@ -236,11 +236,45 @@ def suggested_windows(volume: Volume) -> List[Dict[str, Any]]:
     return out
 
 
+def geometry_probe(items: List[Header]) -> Dict[str, Any]:
+    """Whether a series looks like a regular volume, from headers alone.
+
+    ``Volume`` performs the authoritative check while decoding, and rejects
+    duplicate, missing or irregularly spaced slices. But the positions it
+    checks live in ``ImagePositionPatient``, which is a header tag, so the same
+    question can be answered before opening a single pixel.
+
+    That matters for the picker: a scanner typically writes several
+    reconstructions per study, and the thick-slab or reformatted ones are not
+    regular volumes. Finding that out by opening each in turn, waiting for the
+    decode, and reading an error is a poor way to spend a reader's attention.
+    This is advisory only -- ``Volume`` still decides -- and anything it cannot
+    assess is reported as unknown rather than guessed at.
+    """
+    from .. import dcmlib
+
+    try:
+        positions = sorted(dcmlib.z_of(ds) for _, ds in items)
+    except Exception:
+        return {"regular": None, "reason": "konum bilgisi okunamadı"}
+    if len(positions) < 2:
+        return {"regular": None, "reason": "tek kesit"}
+    gaps = [round(b - a, 4) for a, b in zip(positions, positions[1:])]
+    duplicates = sum(1 for gap in gaps if abs(gap) < 1e-4)
+    if duplicates:
+        return {"regular": False, "reason": f"{duplicates} yinelenen konum"}
+    spread = max(gaps) - min(gaps)
+    if spread > 0.05 * max(abs(max(gaps)), 1e-6) + 1e-3:
+        return {"regular": False, "reason": f"kesit aralığı düzensiz ({min(gaps):.2f}–{max(gaps):.2f} mm)"}
+    return {"regular": True, "reason": ""}
+
+
 def series_cards(headers: List[Header]) -> List[Dict[str, Any]]:
     """One row per series: enough to populate a picker without decoding pixels."""
     cards: List[Dict[str, Any]] = []
     for uid, items in group_series(headers).items():
         ds = items[0][1]
+        probe = geometry_probe(items)
         rows, cols = int(ds.get("Rows", 0) or 0), int(ds.get("Columns", 0) or 0)
         spacing = ds.get("PixelSpacing", None)
         cards.append({
@@ -256,7 +290,9 @@ def series_cards(headers: List[Header]) -> List[Dict[str, Any]]:
             "plane": plane_of(ds),
             "kernel": str(ds.get("ConvolutionKernel", "")),
             "body_part": str(ds.get("BodyPartExamined", "")),
-            "renderable": len(items) > 1 and rows > 0 and cols > 0,
+            "renderable": len(items) > 1 and rows > 0 and cols > 0 and probe["regular"] is not False,
+            "regular_volume": probe["regular"],
+            "geometry_note": probe["reason"],
         })
     cards.sort(key=lambda c: (c["modality"], int(c["number"]) if c["number"].isdigit() else 0))
     return cards

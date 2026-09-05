@@ -467,3 +467,54 @@ class HandshakeCase(unittest.TestCase):
         handshake.clear()
         handshake.clear()
         self.assertIsNone(handshake.read())
+
+
+class ReconcileCase(unittest.TestCase):
+    """`reviewed` is derived from the ledger, not asserted by anyone."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="openrad-reconcile-")).resolve()
+        self.ledger = AttestationLedger(self.tmp, DwellPolicy())
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def session(self, reviewed=False):
+        return {"pages": [{"path": str(self.tmp / "sheet.png"), "reviewed": reviewed, "purpose": "lung:native",
+                           "sources": [{"sop_uid": "1.1"}, {"sop_uid": "2.2"}]}]}
+
+    def slice_seen(self, sop):
+        self.ledger.record([ViewEvent.from_json(
+            {"sop_uid": sop, "dwell_ms": 800, "scale": 1.4, "focused": True, "visible": True})])
+
+    def test_a_page_becomes_reviewed_once_every_source_slice_was_displayed(self):
+        session, refusals, promoted = self.ledger.reconcile(self.session())
+        self.assertFalse(session["pages"][0]["reviewed"])
+        self.assertEqual(promoted, [])
+
+        self.slice_seen("1.1")
+        session, _, promoted = self.ledger.reconcile(self.session())
+        self.assertFalse(session["pages"][0]["reviewed"])  # one of two is not enough
+
+        self.slice_seen("2.2")
+        session, refusals, promoted = self.ledger.reconcile(self.session())
+        self.assertTrue(session["pages"][0]["reviewed"])
+        self.assertEqual(len(promoted), 1)
+        self.assertEqual(refusals, [])
+        self.assertEqual(session["pages"][0]["viewed_via"], "desktop:attestation")
+
+    def test_a_reviewed_flag_nothing_covers_is_taken_away(self):
+        session, refusals, promoted = self.ledger.reconcile(self.session(reviewed=True))
+        self.assertFalse(session["pages"][0]["reviewed"])
+        self.assertEqual(promoted, [])
+        self.assertEqual(len(refusals), 1)
+        self.assertIn("2 of 2 source slices were never displayed", refusals[0]["reason"])
+
+    def test_reconciling_twice_changes_nothing_the_second_time(self):
+        self.slice_seen("1.1")
+        self.slice_seen("2.2")
+        session, _, first = self.ledger.reconcile(self.session())
+        _, refusals, second = self.ledger.reconcile(session)
+        self.assertEqual(len(first), 1)
+        self.assertEqual(second, [])
+        self.assertEqual(refusals, [])

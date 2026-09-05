@@ -37,7 +37,11 @@ export function Toolbar(props: Props) {
         {seriesList.map((series) => (
           <option key={series.series_uid} value={series.series_uid} disabled={!series.renderable}>
             S{series.number} · {series.modality} · {series.instances} kesit
-            {series.description ? ` · ${series.description.slice(0, 22)}` : ""}
+            {series.description ? ` · ${series.description.slice(0, 20)}` : ""}
+            {/* A scanner usually writes several reconstructions; the reformats
+                among them are not regular volumes. Saying so in the picker
+                beats making the reader open each one to find out. */}
+            {series.geometry_note ? ` — ${series.geometry_note}` : ""}
           </option>
         ))}
       </select>

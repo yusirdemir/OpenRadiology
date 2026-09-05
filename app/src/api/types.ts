@@ -30,6 +30,9 @@ export interface SeriesCard {
   kernel: string;
   body_part: string;
   renderable: boolean;
+  /** Header-only geometry probe; null when it could not be assessed. */
+  regular_volume: boolean | null;
+  geometry_note: string;
 }
 
 export interface WindowPreset {

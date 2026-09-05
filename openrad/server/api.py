@@ -533,12 +533,27 @@ def build_router(state: AppState) -> Router:
     # -- attestation ------------------------------------------------------
     @route("POST", "/attest")
     def attest(request: Request) -> Response:
+        """Record what the window displayed, then let the ledger set ``reviewed``.
+
+        The interface never marks a page read. It reports what it drew, and the
+        server derives the flag from the ledger, in both directions.
+        """
         payload = request.json()
         work_dir = state.ensure_allowed(payload.get("work_dir"), "work directory")
         events = [ViewEvent.from_json(raw) for raw in payload.get("events", []) if isinstance(raw, dict)]
         if not events:
             raise UsageError("No view events supplied")
-        return json_response(state.ledger_for(work_dir).record(events))
+        ledger = state.ledger_for(work_dir)
+        result = ledger.record(events)
+        session_path = payload.get("session") or _session_beside(work_dir)
+        if session_path and Path(str(session_path)).is_file():
+            path = Path(str(session_path))
+            session, refusals, promoted = ledger.reconcile(load_session(path))
+            if promoted or refusals:
+                write_json(path, session)
+            result.update(session_path=str(path), promoted=promoted, refused_reviews=refusals,
+                          coverage=ledger.coverage(session))
+        return json_response(result)
 
     @route("GET", "/attest/coverage")
     def attest_coverage(request: Request) -> Response:
@@ -822,6 +837,12 @@ def _scan(state: AppState, root: Path, depth: int = 2) -> List[Dict[str, Any]]:
         })
     cards.sort(key=lambda c: (c.get("date", ""), c.get("time", "")))
     return cards
+
+
+def _session_beside(work_dir: Path) -> Optional[Path]:
+    """The session that owns a work directory, when the caller did not name it."""
+    candidate = Path(work_dir) / "session.json"
+    return candidate if candidate.is_file() else None
 
 
 def _measure_argv(study: Path, payload: Dict[str, Any]) -> List[str]:

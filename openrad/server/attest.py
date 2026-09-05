@@ -228,21 +228,33 @@ class AttestationLedger:
             return False, "page has no registered sources to attest against"
         return False, f"{len(missing)} of {len(sources)} source slices were never displayed"
 
-    def enforce(self, session: Dict[str, Any]) -> Tuple[Dict[str, Any], List[Dict[str, Any]]]:
-        """Clear ``reviewed`` on any page no attestation covers.
+    def reconcile(self, session: Dict[str, Any]) -> Tuple[Dict[str, Any], List[Dict[str, Any]], List[str]]:
+        """Make ``reviewed`` mean exactly what the ledger says, in both directions.
 
-        Returns the session and the list of refusals, so the interface can tell
-        the user exactly which page still needs looking at rather than failing
-        silently.
+        This is the whole point of the mechanism: ``reviewed`` is not something
+        anyone asserts, it is derived. A page an attestation covers becomes
+        reviewed; a page marked reviewed that nothing covers is cleared, and the
+        refusal is reported so the reader is told which page still needs
+        looking at rather than being failed silently.
+
+        Returns the session, the refusals, and the pages newly promoted.
         """
         refusals: List[Dict[str, Any]] = []
+        promoted: List[str] = []
         for page in session.get("pages", []):
-            if not page.get("reviewed"):
-                continue
             ok, reason = self.page_is_attested(page)
-            if not ok:
+            if ok and not page.get("reviewed"):
+                page["reviewed"] = True
+                page.setdefault("viewed_via", "desktop:attestation")
+                promoted.append(str(page.get("path", "")))
+            elif not ok and page.get("reviewed"):
                 page["reviewed"] = False
                 refusals.append({"path": page.get("path", ""), "purpose": page.get("purpose", ""), "reason": reason})
+        return session, refusals, promoted
+
+    def enforce(self, session: Dict[str, Any]) -> Tuple[Dict[str, Any], List[Dict[str, Any]]]:
+        """Reconcile, keeping the older two-value shape for callers that only care about refusals."""
+        session, refusals, _ = self.reconcile(session)
         return session, refusals
 
     def coverage(self, session: Dict[str, Any]) -> Dict[str, Any]:

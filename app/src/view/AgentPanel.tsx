@@ -12,11 +12,11 @@
  * The gate is the reason this panel is not a log viewer. Declining is a real
  * option, and a page nobody looks at never becomes evidence.
  */
-import { useCallback, useEffect, useRef, useState } from "react";
-import { api, fetchFile, followAgent } from "../api/client";
+import { useEffect, useRef, useState } from "react";
+import { api, followAgent } from "../api/client";
 import type { DisplayRequest, TranscriptEntry } from "../api/types";
-import { useConnection } from "../state/connection";
 import { useSession } from "../state/session";
+import { PageViewer } from "./PageViewer";
 
 interface StreamState {
   connected: boolean;
@@ -133,156 +133,31 @@ export function AgentPanel({ open, onClose }: { open: boolean; onClose: () => vo
 }
 
 /**
- * The gate itself.
+ * The gate itself, wrapped around the shared page viewer.
  *
- * The sheet is shown at its natural resolution inside a scrollable frame,
- * never fitted to the window. Fitting a 1568-pixel contact sheet into a laptop
- * window is exactly the case the attestation policy exists to exclude: at that
- * magnification a small nodule may not have survived to the screen at all. So
- * the dwell only accumulates while the page is at full size and the window has
- * focus, and the reader scrolls through it the way they would a film.
+ * The only difference from a reader opening a page is what happens afterwards:
+ * the window tells the sidecar it displayed it, which releases the agent's
+ * blocked `page_view`.
  */
 function DisplayGateDialog({ request, onSettled }: { request: DisplayRequest; onSettled: () => void }) {
-  const policy = useConnection((s) => s.policy);
   const workDir = useSession((s) => s.session?.work_dir ?? "");
-  const [source, setSource] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [dwell, setDwell] = useState(0);
-  const [busy, setBusy] = useState(false);
-  const accumulated = useRef(0);
-
-  useEffect(() => {
-    let url: string | null = null;
-    void fetchFile(request.page_path)
-      .then((blob) => {
-        url = URL.createObjectURL(blob);
-        setSource(url);
-      })
-      .catch((e) => setError(e instanceof Error ? e.message : String(e)));
-    return () => {
-      if (url) URL.revokeObjectURL(url);
-    };
-  }, [request.page_path]);
-
-  useEffect(() => {
-    if (!source) return;
-    let last = performance.now();
-    const tick = window.setInterval(() => {
-      const now = performance.now();
-      const delta = now - last;
-      last = now;
-      if (document.hasFocus() && document.visibilityState === "visible") {
-        accumulated.current += delta;
-        setDwell(Math.min(1, accumulated.current / policy.minDwellMs));
-      }
-    }, 100);
-    return () => window.clearInterval(tick);
-  }, [source, policy.minDwellMs]);
-
-  const confirm = useCallback(async () => {
-    setBusy(true);
-    setError(null);
-    try {
-      await api.attest(workDir, [
-        {
-          study_uid: "",
-          series_uid: "",
-          sop_uid: "",
-          plane: "ax",
-          index: -1,
-          dwell_ms: accumulated.current,
-          scale: 1,
-          focused: true,
-          visible: true,
-          window_center: 0,
-          window_width: 0,
-          source: "page",
-          page_path: request.page_path,
-        },
-      ]);
-      await api.displayShown(request.id);
-      void useSession.getState().refreshCoverage();
-      onSettled();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-      setBusy(false);
-    }
-  }, [workDir, request, onSettled]);
-
-  const decline = useCallback(async () => {
-    setBusy(true);
-    try {
-      await api.displayDeclined(request.id, "Okuyucu bu sayfayı görüntülemedi");
-    } finally {
-      onSettled();
-    }
-  }, [request, onSettled]);
-
-  const ready = dwell >= 1;
-
+  const sessionPath = useSession((s) => s.path ?? undefined);
   return (
-    <div className="absolute inset-0 z-50 grid grid-rows-[auto_1fr_auto] bg-ink-950/96 backdrop-blur-sm">
-      <header className="flex items-center gap-3 border-b border-[var(--hairline-strong)] px-4 py-2.5">
-        <span className="chip border-amber-400/50 text-amber-400">ajan istedi</span>
-        <div className="min-w-0">
-          <p className="truncate text-[12px] text-chalk-100">
-            {request.page_path.split("/").pop()}
-            {request.purpose && <span className="ml-2 text-chalk-600">{request.purpose}</span>}
-          </p>
-          <p className="text-[10px] text-chalk-600">
-            Sayfa doğal çözünürlükte gösteriliyor. Ajanın bunu “okundu” sayabilmesi için burada
-            gerçekten görüntülenmesi gerekir.
-          </p>
-        </div>
-        <div className="flex-1" />
-        <DwellMeter progress={dwell} />
-      </header>
-
-      <div className="scroll-y min-h-0 bg-black">
-        {error && <p className="p-4 text-xs text-alarm-400">{error}</p>}
-        {source ? (
-          // Natural size, never fitted: a shrunken sheet attests nothing.
-          <img src={source} alt="" className="max-w-none" style={{ imageRendering: "pixelated" }} />
-        ) : (
-          <p className="p-4 text-xs text-chalk-600">sayfa yükleniyor…</p>
-        )}
-      </div>
-
-      <footer className="flex items-center gap-2 border-t border-[var(--hairline-strong)] px-4 py-2.5">
-        <p className="flex-1 text-[11px] text-chalk-500">
-          {ready
-            ? "Bu sayfa tasdik edilebilir."
-            : `Tasdik için ${Math.ceil(((1 - dwell) * policy.minDwellMs) / 100) / 10} sn daha görüntülenmeli.`}
-        </p>
-        <button type="button" className="btn" disabled={busy} onClick={() => void decline()}>
-          Reddet
-        </button>
-        <button type="button" className="btn btn-primary" disabled={busy || !ready} onClick={() => void confirm()}>
-          Okudum, ajana ver
-        </button>
-      </footer>
-    </div>
-  );
-}
-
-function DwellMeter({ progress }: { progress: number }) {
-  const radius = 9;
-  const circumference = 2 * Math.PI * radius;
-  return (
-    <svg width="24" height="24" viewBox="0 0 24 24" aria-label="görüntüleme süresi">
-      <circle cx="12" cy="12" r={radius} fill="none" stroke="rgba(255,255,255,0.14)" strokeWidth="2" />
-      <circle
-        cx="12"
-        cy="12"
-        r={radius}
-        fill="none"
-        stroke={progress >= 1 ? "#4ade80" : "#ffb454"}
-        strokeWidth="2"
-        strokeLinecap="round"
-        strokeDasharray={circumference}
-        strokeDashoffset={circumference * (1 - Math.min(1, progress))}
-        transform="rotate(-90 12 12)"
-      />
-    </svg>
+    <PageViewer
+      pagePath={request.page_path}
+      purpose={request.purpose}
+      workDir={workDir}
+      sessionPath={sessionPath}
+      requestedByAgent
+      onAttested={() => {
+        void api.displayShown(request.id).finally(() => {
+          void useSession.getState().refreshCoverage();
+          onSettled();
+        });
+      }}
+      onDismiss={() => {
+        void api.displayDeclined(request.id, "Okuyucu bu sayfayı görüntülemedi").finally(onSettled);
+      }}
+    />
   );
 }

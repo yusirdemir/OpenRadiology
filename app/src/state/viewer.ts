@@ -153,10 +153,13 @@ export const useViewer = create<ViewerState>((set, get) => ({
     } catch (error) {
       const next = [...get().panes];
       const pane = next[paneIndex];
-      if (pane) {
-        next[paneIndex] = { ...pane, loading: false, error: error instanceof Error ? error.message : String(error) };
-        set({ panes: next });
-      }
+      // Same guard as the success path. A slow failure that resolves after the
+      // reader has already moved on must not stamp its error onto the series
+      // they switched to -- which looked exactly like "this series is broken
+      // too" and left the pane unusable.
+      if (!pane || pane.seriesUid !== seriesUid) return;
+      next[paneIndex] = { ...pane, loading: false, error: error instanceof Error ? error.message : String(error) };
+      set({ panes: next });
     }
   },
 

@@ -8,10 +8,20 @@
  * a number gets here is by coming back from the engine with its evidence file.
  */
 import { useMemo, useState } from "react";
-import type { Claim, LocaleBundle, MeasureResult, Ref, Region, RegionStatus, SessionStudy } from "../api/types";
+import type {
+  AttestationCoverage,
+  Claim,
+  LocaleBundle,
+  MeasureResult,
+  Ref,
+  Region,
+  RegionStatus,
+  SessionPage,
+  SessionStudy,
+} from "../api/types";
 import { AddressChip, MeasurementChip, STATUS_LABEL_TR } from "./primitives";
 
-export type EvidenceTab = "region" | "claims" | "measure";
+export type EvidenceTab = "region" | "claims" | "measure" | "pages";
 
 interface Props {
   study: SessionStudy | undefined;
@@ -33,6 +43,10 @@ interface Props {
   onClaimRemove: (id: string) => void;
   onNewClaimFromMeasurement: () => void;
   onAttachMeasurement: (claimId: string) => void;
+  pages: SessionPage[];
+  attestation: AttestationCoverage | null;
+  onOpenPage: (page: SessionPage) => void;
+  onRender: () => void;
 }
 
 const STATUSES: RegionStatus[] = ["finding", "no_finding", "limited", "not_covered"];
@@ -49,6 +63,7 @@ export function EvidencePanel(props: Props) {
             ["region", "Bölge"],
             ["claims", `Bulgular${props.claims.length ? ` (${props.claims.length})` : ""}`],
             ["measure", "Ölçüm"],
+            ["pages", `Sayfalar${props.pages.length ? ` (${props.pages.length})` : ""}`],
           ] as [EvidenceTab, string][]
         ).map(([id, label]) => (
           <button
@@ -97,6 +112,14 @@ export function EvidencePanel(props: Props) {
             busy={props.measuring}
             error={props.measureError}
             onNewClaim={props.onNewClaimFromMeasurement}
+          />
+        )}
+        {tab === "pages" && (
+          <PageList
+            pages={props.pages}
+            attestation={props.attestation}
+            onOpen={props.onOpenPage}
+            onRender={props.onRender}
           />
         )}
       </div>
@@ -466,5 +489,82 @@ function Labelled({ label, children }: { label: string; children: React.ReactNod
       <span className="rail-label mb-1 block">{label}</span>
       {children}
     </label>
+  );
+}
+
+
+// -------------------------------------------------------------------- pages
+/**
+ * The rendered sheets, and whether looking at them has actually happened.
+ *
+ * `reviewed` is never a checkbox here. It is set by the server from view
+ * attestations and cleared again for any page none covers, so the only way to
+ * move a page into the "read" column is to open it and read it.
+ */
+function PageList({
+  pages,
+  attestation,
+  onOpen,
+  onRender,
+}: {
+  pages: SessionPage[];
+  attestation: AttestationCoverage | null;
+  onOpen: (page: SessionPage) => void;
+  onRender: () => void;
+}) {
+  const attested = new Map((attestation?.pages ?? []).map((row) => [row.path, row]));
+  if (!pages.length) {
+    return (
+      <div className="space-y-3 p-2.5">
+        <p className="text-xs leading-relaxed text-chalk-600">
+          Bu oturumda henüz render edilmiş sayfa yok. Rapor, hangi kesitlerin sistematik olarak
+          tarandığını sayfalar üzerinden kanıtlar.
+        </p>
+        <button type="button" className="btn btn-primary w-full" onClick={onRender}>
+          Bu seriden sayfa üret
+        </button>
+      </div>
+    );
+  }
+  const done = pages.filter((page) => page.reviewed).length;
+  return (
+    <div className="p-2.5">
+      <div className="mb-2 flex items-center justify-between">
+        <span className="readout text-[11px] text-chalk-300">
+          {done}
+          <span className="text-chalk-600">/{pages.length} okundu</span>
+        </span>
+        <button type="button" className="btn" onClick={onRender}>
+          + sayfa üret
+        </button>
+      </div>
+      <ul className="space-y-0.5">
+        {pages.map((page) => {
+          const row = attested.get(page.path);
+          return (
+            <li key={page.path}>
+              <button
+                type="button"
+                onClick={() => onOpen(page)}
+                className="flex w-full items-center gap-2 rounded-[2px] px-1.5 py-1 text-left hover:bg-ink-850"
+                title={row?.reason ?? ""}
+              >
+                <span className={page.reviewed ? "text-attest-400" : "text-chalk-600"}>
+                  {page.reviewed ? "✓" : "○"}
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="readout block truncate text-[11px] text-chalk-100">
+                    {page.path.split("/").pop()}
+                  </span>
+                  <span className="block truncate text-[10px] text-chalk-600">
+                    {page.purpose || "amaç belirtilmemiş"} · {page.sources.length} kesit
+                  </span>
+                </span>
+              </button>
+            </li>
+          );
+        })}
+      </ul>
+    </div>
   );
 }
