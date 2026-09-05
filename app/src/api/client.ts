@@ -13,6 +13,7 @@
 import type {
   AttestationCoverage,
   DisplayRequest,
+  IdentityCandidate,
   LocaleBundle,
   CheckResult,
   JobSnapshot,
@@ -245,6 +246,11 @@ export const api = {
     get<{ language: string; available: string[]; locale: LocaleBundle }>(`/locale?lang=${encodeURIComponent(lang)}`),
 
   scanStudies: (root: string) => post<{ root: string; studies: StudyCard[] }>("/studies/scan", { root }),
+  identityCandidates: (studiesRoot: string, folders: string[]) =>
+    post<{ studies_root: string; default_name: string; candidates: IdentityCandidate[] }>(
+      "/studies/identity-candidates",
+      { studies_root: studiesRoot, folders },
+    ),
   inventory: (study: string) => post<Record<string, unknown>>("/studies/inventory", { study }),
   listSeries: (study: string) => post<{ study: string; series: SeriesCard[] }>("/series/list", { study }),
   seriesMeta: (study: string, series: string, allowTilt = false) =>

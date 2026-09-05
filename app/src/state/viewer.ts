@@ -78,6 +78,7 @@ interface ViewerState {
   setView: (paneIndex: number, view: ViewState) => void;
   setMip: (paneIndex: number, mipMm: number) => void;
   jumpToRef: (ref: Ref, studyPath: string) => Promise<void>;
+  syncFromActive: () => Promise<void>;
 }
 
 function defaultWindow(meta: SeriesMeta | null): WindowSetting {
@@ -199,14 +200,53 @@ export const useViewer = create<ViewerState>((set, get) => ({
   },
 
   setWindow: (paneIndex, patch) => {
-    const pane = get().panes[paneIndex];
+    const { panes, linked } = get();
+    const pane = panes[paneIndex];
     if (!pane) return;
-    get().patchPane(paneIndex, { window: { ...pane.window, ...patch } });
+    // Two studies compared under different windows is not a comparison. While
+    // the panes are linked the window travels with them; unlink to window one
+    // study on its own.
+    const targets = linked ? panes.map((_, i) => i) : [paneIndex];
+    set({
+      panes: panes.map((entry, i) =>
+        targets.includes(i) ? { ...entry, window: { ...entry.window, ...patch } } : entry,
+      ),
+    });
   },
 
   setView: (paneIndex, view) => get().patchPane(paneIndex, { view }),
 
   setMip: (paneIndex, mipMm) => get().patchPane(paneIndex, { mipMm }),
+
+  /**
+   * Move the other panes to the same place in the patient.
+   *
+   * Two studies of the same person almost never share a slice index: the
+   * spacing differs, the coverage starts somewhere else, the patient lay
+   * differently. Linking by index would put a lesion next to a rib and call it
+   * progression. So the active pane's slice centre is converted to patient
+   * coordinates and each other pane is asked which of its slices holds that
+   * point.
+   */
+  syncFromActive: async () => {
+    const { panes, activePane, linked } = get();
+    const source = panes[activePane];
+    if (!linked || panes.length < 2 || !source?.meta || source.plane !== "ax") return;
+    const [, rows, cols] = source.meta.geometry.shape_zyx;
+    try {
+      const anchor = await api.point(source.studyPath, source.seriesUid, source.index, rows / 2, cols / 2);
+      await Promise.all(
+        panes.map(async (pane, index) => {
+          if (index === activePane || !pane.meta || pane.plane !== "ax") return;
+          const found = await api.locate(pane.studyPath, pane.seriesUid, anchor.patient_mm);
+          get().patchPane(index, { index: found.index });
+        }),
+      );
+    } catch {
+      // A study that cannot be located against is left where it is rather than
+      // moved somewhere plausible-looking.
+    }
+  },
 
   /**
    * Fly to a cited address. The series is opened if needed, the slice is found

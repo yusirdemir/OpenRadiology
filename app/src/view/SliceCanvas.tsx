@@ -520,8 +520,8 @@ function ViewerHud({ image, cursor, scale, dwell, win, attested }: HudProps) {
   if (!image) return null;
   return (
     <>
-      <div className="pointer-events-none absolute left-3 top-2.5 flex items-center gap-2">
-        <DwellRing progress={dwell} done={attested} />
+      <div className="absolute left-3 top-2.5 flex items-center gap-2">
+        <DwellRing progress={dwell} done={attested} scale={scale} />
         <div className="readout text-[11px] leading-tight text-chalk-300">
           <div>
             {image.plane.toUpperCase()} {image.index + 1}
@@ -564,12 +564,30 @@ function ViewerHud({ image, cursor, scale, dwell, win, attested }: HudProps) {
  * animated thing in the interface, because it is the one thing that is
  * continuously happening.
  */
-function DwellRing({ progress, done }: { progress: number; done: boolean }) {
+function DwellRing({ progress, done, scale }: { progress: number; done: boolean; scale: number }) {
   const radius = 7;
   const circumference = 2 * Math.PI * radius;
+  // Silence is the wrong answer here: a ring that never fills looks broken.
+  // Below one screen pixel per image pixel the view attests nothing, and the
+  // reader should be told that rather than left guessing.
+  const tooSmall = scale < 1 && !done;
+  const title = done
+    ? "Bu kesit görüntülendi ve tasdik defterine yazıldı."
+    : tooSmall
+      ? `Görüntü tam çözünürlükte değil (${scale.toFixed(2)} px/px). Yakınlaştırın; küçültülmüş bir görüntü tasdik etmez.`
+      : "Kesit yeterince görüntülendiğinde tasdik edilir.";
   return (
-    <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden>
-      <circle cx="9" cy="9" r={radius} fill="none" stroke="rgba(255,255,255,0.13)" strokeWidth="1.5" />
+    <svg width="18" height="18" viewBox="0 0 18 18" role="img" aria-label={title}>
+      <title>{title}</title>
+      <circle
+        cx="9"
+        cy="9"
+        r={radius}
+        fill="none"
+        stroke={tooSmall ? "rgba(251,191,36,0.35)" : "rgba(255,255,255,0.13)"}
+        strokeWidth="1.5"
+        strokeDasharray={tooSmall ? "2 2" : undefined}
+      />
       <circle
         cx="9"
         cy="9"

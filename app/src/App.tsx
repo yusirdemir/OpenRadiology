@@ -7,6 +7,7 @@ import { useSession } from "./state/session";
 import { useShelf } from "./state/shelf";
 import { useViewer } from "./state/viewer";
 import { ReportScreen } from "./view/ReportScreen";
+import { IdentityGate } from "./view/IdentityGate";
 import { Shelf } from "./view/Shelf";
 import { Workspace } from "./view/Workspace";
 
@@ -18,6 +19,7 @@ export default function App() {
   const [locale, setLocale] = useState<LocaleBundle | null>(null);
   const [opening, setOpening] = useState(false);
   const [openError, setOpenError] = useState<string | null>(null);
+  const [identityGate, setIdentityGate] = useState<{ folders: string[]; message: string } | null>(null);
   const prepare = useSession((s) => s.prepare);
   const closeSession = useSession((s) => s.close);
   const root = useShelf((s) => s.root);
@@ -35,19 +37,32 @@ export default function App() {
   }, [status]);
 
   const open = useCallback(
-    async (paths: string[]) => {
+    async (paths: string[], identitySource?: string) => {
       setOpening(true);
       setOpenError(null);
       try {
         // The session is prepared against the scanned root, so the engine
-        // resolves study folders exactly as `openrad prepare` would.
-        // `repo` is left to the sidecar, which puts the session in the
-        // application's workspace rather than inside the patient's folder.
-        await prepare({ studies_root: root, folders: paths, lang: "tr" });
+        // resolves study folders exactly as `openrad prepare` would. `repo` is
+        // left to the sidecar, which puts the session in the application's
+        // workspace rather than inside the patient's folder.
+        await prepare({
+          studies_root: root,
+          folders: paths,
+          lang: "tr",
+          ...(identitySource ? { identity_source: identitySource } : {}),
+        });
         useViewer.setState({ panes: [], activePane: 0, pending: [] });
+        setIdentityGate(null);
         setScreen("workspace");
       } catch (e) {
-        setOpenError(e instanceof Error ? e.message : String(e));
+        const message = e instanceof Error ? e.message : String(e);
+        // The engine refuses to compare exports whose patient identifiers
+        // differ. That is a question for the reader, not an error to report.
+        if (/patient identifier/i.test(message) || /identity evidence/i.test(message)) {
+          setIdentityGate({ folders: paths, message });
+        } else {
+          setOpenError(message);
+        }
       } finally {
         setOpening(false);
       }
@@ -83,6 +98,15 @@ export default function App() {
         </div>
       )}
       {screen === "shelf" && <Shelf onOpen={(paths) => void open(paths)} busy={opening} />}
+      {identityGate && root && (
+        <IdentityGate
+          studiesRoot={root}
+          folders={identityGate.folders}
+          message={identityGate.message}
+          onCancel={() => setIdentityGate(null)}
+          onConfirm={(identitySource) => void open(identityGate.folders, identitySource)}
+        />
+      )}
       {screen === "workspace" && (
         <Workspace
           locale={locale}

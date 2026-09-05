@@ -10,13 +10,14 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../api/client";
-import type { Claim, LocaleBundle, MeasureResult, Ref, SliceImage } from "../api/types";
+import type { Claim, LocaleBundle, MeasureResult, Ref, SessionStudy, SliceImage } from "../api/types";
 import { AttestationTracker } from "../lib/attestation";
 import { SliceSourcePool } from "../lib/sliceCache";
 import { useConnection } from "../state/connection";
 import { useSession } from "../state/session";
 import { useViewer, type PendingPoint, type ToolName } from "../state/viewer";
 import { AgentPanel } from "./AgentPanel";
+import { CompareBar } from "./CompareBar";
 import { EvidencePanel } from "./EvidencePanel";
 import { Filmstrip } from "./Filmstrip";
 import { RegionRail } from "./RegionRail";
@@ -80,37 +81,63 @@ export function Workspace({ locale, onBack, onReport }: Props) {
   }, []);
 
   // -- open the first series automatically -------------------------------
+  /**
+   * Open one pane per study, oldest on the left.
+   *
+   * The order is the session's, which came from DICOM StudyDate and StudyTime.
+   * For each study the largest renderable series is chosen, because that is
+   * almost always the thin-slice reconstruction the reading is done on.
+   */
   useEffect(() => {
     if (!session || viewer.panes.length) return;
-    const first = session.studies[0];
-    if (!first) return;
+    const studies = [...session.studies].sort((a, b) => `${a.date}${a.time}`.localeCompare(`${b.date}${b.time}`));
+    if (!studies.length) return;
     void (async () => {
-      const list = await viewer.loadSeriesList(first.path);
-      const candidate =
-        list.filter((s) => s.renderable).sort((a, b) => b.instances - a.instances)[0] ?? list[0];
-      if (candidate) {
-        useViewer.setState({
-          panes: [
-            {
-              studyPath: first.path,
-              studyUid: first.uid,
-              seriesUid: candidate.series_uid,
-              meta: null,
-              plane: "ax",
-              index: 0,
-              mipMm: 0,
-              window: { name: "soft", center: 40, width: 400, invert: false },
-              view: { zoom: 1, panX: 0, panY: 0 },
-              image: null,
-              loading: true,
-              error: null,
-            },
-          ],
-        });
-        await viewer.openSeries(0, first.path, candidate.series_uid);
+      const chosen: { study: SessionStudy; seriesUid: string }[] = [];
+      for (const study of studies) {
+        const list = await viewer.loadSeriesList(study.path);
+        const candidate = list.filter((s) => s.renderable).sort((a, b) => b.instances - a.instances)[0] ?? list[0];
+        if (candidate) chosen.push({ study, seriesUid: candidate.series_uid });
       }
+      if (!chosen.length) return;
+      useViewer.setState({
+        panes: chosen.map(({ study, seriesUid }) => ({
+          studyPath: study.path,
+          studyUid: study.uid,
+          seriesUid,
+          meta: null,
+          plane: "ax" as const,
+          index: 0,
+          mipMm: 0,
+          window: { name: "soft", center: 40, width: 400, invert: false },
+          view: { zoom: 1, panX: 0, panY: 0 },
+          image: null,
+          loading: true,
+          error: null,
+        })),
+        activePane: chosen.length - 1,
+      });
+      for (const [index, entry] of chosen.entries()) {
+        await viewer.openSeries(index, entry.study.path, entry.seriesUid);
+      }
+      // The newest examination is the one being read; the priors support it.
+      useViewer.setState({ activePane: chosen.length - 1 });
     })();
   }, [session, viewer]);
+
+  /**
+   * Keep the priors on the same anatomy, debounced.
+   *
+   * Scrolling emits an index per wheel notch; asking the engine to locate a
+   * patient point for each one would queue far more work than the reader can
+   * see. One trailing call per pause is enough to keep the panes together.
+   */
+  const activeIndex = pane?.index ?? 0;
+  useEffect(() => {
+    if (!viewer.linked || viewer.panes.length < 2) return;
+    const timer = window.setTimeout(() => void viewer.syncFromActive(), 140);
+    return () => window.clearTimeout(timer);
+  }, [activeIndex, viewer.activePane, viewer.linked, viewer.panes.length, viewer]);
 
   // -- keyboard ----------------------------------------------------------
   useEffect(() => {
@@ -409,6 +436,38 @@ export function Workspace({ locale, onBack, onReport }: Props) {
           </div>
         </div>
 
+        {viewer.panes.length > 1 && (
+          <div className="flex h-7 shrink-0 items-center gap-2 border-t border-[var(--hairline)] bg-ink-900 px-2.5">
+            <button
+              type="button"
+              className={`btn ${viewer.linked ? "btn-active" : ""}`}
+              title="Panelleri hasta koordinatına kilitle (kesit numarasına değil)"
+              onClick={() => viewer.setLinked(!viewer.linked)}
+            >
+              {viewer.linked ? "Kilitli" : "Bağımsız"}
+            </button>
+            <span className="text-[10px] text-chalk-600">
+              {viewer.linked
+                ? "Bir paneli kaydırdığınızda diğerleri aynı anatomik seviyeye gelir."
+                : "Paneller ayrı ayrı geziliyor."}
+            </span>
+            <div className="flex-1" />
+            {viewer.panes.map((entry, i) => {
+              const study = session.studies.find((st) => st.path === entry.studyPath);
+              return (
+                <button
+                  key={i}
+                  type="button"
+                  className={`chip ${i === viewer.activePane ? "border-amber-400/60 text-amber-400" : ""}`}
+                  onClick={() => viewer.setActivePane(i)}
+                >
+                  {study ? `${study.date.slice(6, 8)}.${study.date.slice(4, 6)}.${study.date.slice(0, 4)}` : `#${i + 1}`}
+                </button>
+              );
+            })}
+          </div>
+        )}
+
         {pane?.meta && (
           <div className="shrink-0 border-t border-[var(--hairline)]">
             <Filmstrip
@@ -422,6 +481,16 @@ export function Workspace({ locale, onBack, onReport }: Props) {
               onSeek={(index) => viewer.setIndex(viewer.activePane, index)}
             />
           </div>
+        )}
+
+        {session.mode === "comparison" && (
+          <CompareBar
+            studies={session.studies}
+            claims={session.claims}
+            activeClaimId={activeClaimId}
+            onSelect={setActiveClaimId}
+            onJump={jump}
+          />
         )}
       </main>
 

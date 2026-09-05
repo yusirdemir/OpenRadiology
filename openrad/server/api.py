@@ -259,6 +259,39 @@ def build_router(state: AppState) -> Router:
         study = _study_dir(state, payload)
         return json_response(inventory(study, redact=bool(payload.get("redact", True))))
 
+    @route("POST", "/studies/identity-candidates")
+    def identity_candidates(request: Request) -> Response:
+        """Documents in the archive that already name every selected study.
+
+        When two exports carry different patient identifiers the engine refuses
+        to compare them until a document says they are the same person. That
+        refusal is right -- comparing two patients would produce a confident,
+        wrong report -- but the reader usually has such a document sitting in
+        the archive already. This finds the plausible ones so the assertion is
+        one deliberate click rather than a path typed from memory. The file is
+        hashed into the session either way: it is the reader's assertion, on
+        the record.
+        """
+        payload = request.json()
+        root = state.ensure_allowed(payload.get("studies_root"), "studies root")
+        folders = [Path(str(f)).name for f in (payload.get("folders") or [])]
+        if not folders:
+            raise UsageError("Give the study folders that need to be linked")
+        candidates: List[Dict[str, Any]] = []
+        for path in sorted(root.glob("*")):
+            if not path.is_file() or path.suffix.lower() not in (".md", ".txt", ".csv", ".json"):
+                continue
+            try:
+                text = path.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            missing = [name for name in folders if name not in text]
+            candidates.append({"path": str(path), "name": path.name, "covers_all": not missing,
+                               "missing": missing, "size": path.stat().st_size})
+        candidates.sort(key=lambda c: (not c["covers_all"], c["name"]))
+        return json_response({"studies_root": str(root), "default_name": state.settings.identity_index,
+                              "candidates": candidates})
+
     @route("POST", "/series/list")
     def series_list(request: Request) -> Response:
         study = _study_dir(state, request.json())

@@ -308,3 +308,12 @@ export interface TranscriptEntry {
   page?: string;
   purpose?: string;
 }
+
+/** A document in the archive that could establish a same-patient mapping. */
+export interface IdentityCandidate {
+  path: string;
+  name: string;
+  covers_all: boolean;
+  missing: string[];
+  size: number;
+}
