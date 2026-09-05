@@ -12,6 +12,7 @@
  */
 import type {
   AttestationCoverage,
+  DisplayRequest,
   LocaleBundle,
   CheckResult,
   JobSnapshot,
@@ -22,6 +23,7 @@ import type {
   Session,
   SliceImage,
   StudyCard,
+  TranscriptEntry,
   ViewEventPayload,
 } from "./types";
 
@@ -170,18 +172,18 @@ export async function fetchText(path: string): Promise<string> {
 export type StreamHandler = (event: string, data: unknown) => void;
 
 /**
- * Follow a job's server-sent events.
+ * Follow a server-sent event stream.
  *
  * `EventSource` cannot carry an Authorization header, and putting the session
  * token in a URL would leak it into logs and history, so the stream is read
  * from `fetch` and parsed here. Returns a function that stops following.
  */
-export function followJob(jobId: string, onEvent: StreamHandler): () => void {
+export function followStream(path: string, onEvent: StreamHandler): () => void {
   const controller = new AbortController();
   const { url } = handshake();
   void (async () => {
     try {
-      const response = await fetch(`${url}/jobs/${jobId}/events`, {
+      const response = await fetch(url + path, {
         headers: authHeaders(),
         signal: controller.signal,
       });
@@ -219,6 +221,11 @@ export function followJob(jobId: string, onEvent: StreamHandler): () => void {
   })();
   return () => controller.abort();
 }
+
+export const followJob = (jobId: string, onEvent: StreamHandler): (() => void) =>
+  followStream(`/jobs/${jobId}/events`, onEvent);
+
+export const followAgent = (onEvent: StreamHandler): (() => void) => followStream("/agent/stream", onEvent);
 
 // ------------------------------------------------------------------ routes
 export const api = {
@@ -289,6 +296,12 @@ export const api = {
   cancelJob: (id: string) => post<JobSnapshot>(`/jobs/${id}/cancel`, {}),
   anonymize: (source: string, target: string, salt: string) =>
     post<JobSnapshot>("/anonymize", { source, target, salt }),
+
+  agentState: () =>
+    get<{ window_connected: boolean; pending_displays: DisplayRequest[]; transcript: TranscriptEntry[] }>("/agent/state"),
+  displayShown: (id: string) => post<{ acknowledged: boolean }>(`/agent/display/${id}/shown`, {}),
+  displayDeclined: (id: string, reason: string) =>
+    post<{ acknowledged: boolean }>(`/agent/display/${id}/declined`, { reason }),
 };
 
 /** Filmstrip thumbnails as one PNG, with the indices it actually sampled. */

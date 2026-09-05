@@ -285,3 +285,26 @@ export interface LocaleBundle {
   text: Record<string, string>;
   regions: Record<string, string>;
 }
+
+/** A page the bridged agent has asked the window to display. */
+export interface DisplayRequest {
+  id: string;
+  page_path: string;
+  session_path: string;
+  purpose: string;
+  created: number;
+  shown_at: number | null;
+  declined: string;
+}
+
+/** One line of what the agent did, replayable from the panel. */
+export interface TranscriptEntry {
+  id: string;
+  ts: number;
+  kind: "tool" | "display_request" | "display_shown" | string;
+  summary?: string;
+  name?: string;
+  arguments?: Record<string, unknown>;
+  page?: string;
+  purpose?: string;
+}

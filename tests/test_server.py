@@ -8,15 +8,19 @@ covers.
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import sys
 import tempfile
+import threading
+import time
 import unittest
 import urllib.error
 import urllib.request
 from pathlib import Path
 
 import numpy as np
+from PIL import Image
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -269,3 +273,152 @@ class AttestationCase(unittest.TestCase):
 
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()
+
+
+class DisplayGateCase(unittest.TestCase):
+    """The rule an agent cannot talk its way around.
+
+    Over the bridge, `page_view` has to pass through the application window.
+    These tests drive the real JSON-RPC endpoint rather than the gate helper,
+    because the guarantee is only worth anything if it holds at the protocol
+    boundary an MCP client actually touches.
+
+    Each test uses its own registered page: an attestation is permanent by
+    design, so a shared page would make whichever test ran first silently
+    disable the gate for all the others.
+    """
+
+    PAGES = ("no_window", "declined", "no_dwell", "displayed")
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = Path(tempfile.mkdtemp(prefix="openrad-gate-")).resolve()
+        make_study(cls.tmp, "gate_study", date="20260201", gaps=(0, 1, 2))
+        os.environ["OPENRAD_STATE_DIR"] = str(cls.tmp / "state")
+        cls.state, cls.server = create_app(budget_bytes=256 * 1024 ** 2)
+        cls.state.allow(cls.tmp)
+        cls.server.start()
+        cls.base = f"http://{cls.server.host}:{cls.server.port}"
+        cls.token = cls.server.token
+
+        _, prepared, _ = request(f"{cls.base}/session/prepare", method="POST", token=cls.token,
+                                 payload={"repo": str(cls.tmp / "repo"), "studies_root": str(cls.tmp / "DCIM"),
+                                          "folders": ["gate_study"], "lang": "en"})
+        cls.session_path = prepared["session_path"]
+        cls.work_dir = Path(prepared["session"]["work_dir"])
+        cls.sheets = {}
+        for index, name in enumerate(cls.PAGES):
+            sheet = cls.work_dir / "lung" / f"S1_lung_axial_{index:02d}_{name}.png"
+            sheet.parent.mkdir(parents=True, exist_ok=True)
+            Image.new("L", (64, 64), color=80 + index).save(sheet)
+            cls.sheets[name] = sheet
+        request(f"{cls.base}/session/register", method="POST", token=cls.token,
+                payload={"path": cls.session_path, "directory": str(cls.work_dir)})
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.server.stop()
+        cls.state.shutdown()
+        os.environ.pop("OPENRAD_STATE_DIR", None)
+        shutil.rmtree(cls.tmp, ignore_errors=True)
+
+    def call(self, message):
+        _, body, _ = request(f"{self.base}/mcp", method="POST", token=self.token, payload=message)
+        return body
+
+    def page_view(self, page):
+        return self.call({"jsonrpc": "2.0", "id": 7, "method": "tools/call",
+                          "params": {"name": "page_view",
+                                     "arguments": {"session": str(self.session_path),
+                                                   "page": self.sheets[page].name}}})
+
+    def page_state(self, page):
+        session = json.loads(Path(self.session_path).read_text())
+        return next(p for p in session["pages"] if p["path"] == str(self.sheets[page]))
+
+    def await_request(self, timeout=10):
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            pending = self.state.display.pending()
+            if pending:
+                return pending[0]
+            time.sleep(0.05)
+        raise AssertionError("the gate never asked the window to display anything")
+
+    def in_background(self, page):
+        out = []
+        worker = threading.Thread(target=lambda: out.append(self.page_view(page)), daemon=True)
+        worker.start()
+        return out, worker
+
+    # -- the gate ----------------------------------------------------------
+    def test_without_a_window_the_page_cannot_be_marked_reviewed(self):
+        result = self.page_view("no_window")["response"]["result"]
+        self.assertTrue(result["isError"])
+        self.assertIn("window is not connected", result["content"][0]["text"])
+        self.assertFalse(self.page_state("no_window")["reviewed"])
+
+    def test_a_window_that_declines_does_not_mark_it_reviewed_either(self):
+        cancel = self.state.display.subscribe(lambda _r: None)
+        try:
+            out, worker = self.in_background("declined")
+            self.state.display.decline(self.await_request()["id"], "reader said no")
+            worker.join(timeout=10)
+        finally:
+            cancel()
+        result = out[-1]["response"]["result"]
+        self.assertTrue(result["isError"])
+        self.assertIn("declined", result["content"][0]["text"])
+        self.assertFalse(self.page_state("declined")["reviewed"])
+
+    def test_shown_without_a_dwell_is_still_refused(self):
+        """Putting a page on screen is not the same as looking at it."""
+        cancel = self.state.display.subscribe(lambda _r: None)
+        try:
+            out, worker = self.in_background("no_dwell")
+            self.state.display.shown(self.await_request()["id"])
+            worker.join(timeout=10)
+        finally:
+            cancel()
+        result = out[-1]["response"]["result"]
+        self.assertTrue(result["isError"])
+        self.assertIn("not looked at long enough", result["content"][0]["text"])
+        self.assertFalse(self.page_state("no_dwell")["reviewed"])
+
+    def test_a_page_that_was_really_displayed_passes_the_gate(self):
+        cancel = self.state.display.subscribe(lambda _r: None)
+        try:
+            out, worker = self.in_background("displayed")
+            pending = self.await_request()
+            # The window draws it, the reader dwells on it, the ledger records it.
+            request(f"{self.base}/attest", method="POST", token=self.token,
+                    payload={"work_dir": str(self.work_dir),
+                             "events": [{"source": "page", "page_path": str(self.sheets["displayed"]),
+                                         "dwell_ms": 1500, "scale": 2.0, "focused": True, "visible": True}]})
+            self.state.display.shown(pending["id"])
+            worker.join(timeout=15)
+        finally:
+            cancel()
+        result = out[-1]["response"]["result"]
+        self.assertFalse(result.get("isError", False))
+        self.assertTrue(any(block.get("type") == "image" for block in result["content"]))
+        self.assertTrue(self.page_state("displayed")["reviewed"])
+
+    def test_the_transcript_records_what_the_agent_did(self):
+        self.page_view("no_window")
+        entries = self.state.transcript.entries()
+        self.assertIn("tool", {entry["kind"] for entry in entries})
+        self.assertTrue(any("sayfa" in entry.get("summary", "") for entry in entries))
+
+
+class BridgeCase(unittest.TestCase):
+    def test_without_a_handshake_the_bridge_reports_no_window(self):
+        from openrad.server import bridge
+
+        with tempfile.TemporaryDirectory() as empty:
+            os.environ["OPENRAD_STATE_DIR"] = empty
+            try:
+                self.assertIsNone(bridge.Bridge.discover())
+                self.assertEqual(bridge.main(["--no-fallback"]), 3)
+            finally:
+                os.environ.pop("OPENRAD_STATE_DIR", None)

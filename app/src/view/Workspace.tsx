@@ -16,6 +16,7 @@ import { SliceSourcePool } from "../lib/sliceCache";
 import { useConnection } from "../state/connection";
 import { useSession } from "../state/session";
 import { useViewer, type PendingPoint, type ToolName } from "../state/viewer";
+import { AgentPanel } from "./AgentPanel";
 import { EvidencePanel } from "./EvidencePanel";
 import { Filmstrip } from "./Filmstrip";
 import { RegionRail } from "./RegionRail";
@@ -44,6 +45,7 @@ export function Workspace({ locale, onBack, onReport }: Props) {
   const [lastPoint, setLastPoint] = useState<PendingPoint | null>(null);
   const [lastGeometry, setLastGeometry] = useState<{ tool: ToolName; points: PendingPoint[]; sopUid: string; label: string } | null>(null);
   const [images, setImages] = useState<Record<number, SliceImage | null>>({});
+  const [agentOpen, setAgentOpen] = useState(false);
 
   const pane = viewer.panes[viewer.activePane];
   const image = pane ? images[viewer.activePane] ?? null : null;
@@ -307,7 +309,7 @@ export function Workspace({ locale, onBack, onReport }: Props) {
   const blocking = check?.blocking.length ?? 0;
 
   return (
-    <div className="grid h-full grid-cols-[248px_1fr_320px] grid-rows-[36px_1fr_28px] overflow-hidden">
+    <div className="relative grid h-full grid-cols-[248px_1fr_320px] grid-rows-[36px_1fr_28px] overflow-hidden">
       {/* ---- top bar ---- */}
       <header className="chrome-grain col-span-3 flex items-center gap-2 border-b border-[var(--hairline)] bg-ink-900 px-2.5">
         <button type="button" className="btn" onClick={onBack}>
@@ -324,6 +326,14 @@ export function Workspace({ locale, onBack, onReport }: Props) {
         </button>
         <button type="button" className="btn" onClick={() => void runCheck()}>
           Denetle{blocking ? ` (${blocking})` : ""}
+        </button>
+        <button
+          type="button"
+          className={`btn ${agentOpen ? "btn-active" : ""}`}
+          title="MCP köprüsüne bağlı ajanın adımları"
+          onClick={() => setAgentOpen((open) => !open)}
+        >
+          Ajan
         </button>
         <button type="button" className="btn btn-primary" onClick={onReport}>
           Rapor
@@ -453,6 +463,10 @@ export function Workspace({ locale, onBack, onReport }: Props) {
 
       {/* ---- status bar ---- */}
       <StatusBar planeCount={pane?.meta?.planes[pane.plane].count ?? 0} />
+
+      {/* The agent panel and its display gate overlay the whole workspace: a
+          page the agent asked for has to be looked at, not glanced past. */}
+      <AgentPanel open={agentOpen} onClose={() => setAgentOpen(false)} />
     </div>
   );
 }

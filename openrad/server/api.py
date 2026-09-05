@@ -22,10 +22,11 @@ import json
 import logging
 import math
 import os
+import threading
 import time
 from collections import deque
 from pathlib import Path
-from typing import Any, Deque, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Deque, Dict, Iterator, List, Optional, Sequence, Tuple
 
 import numpy as np
 
@@ -38,6 +39,7 @@ from ..create_report import register as cr_register
 from ..create_report import validate as cr_validate
 from ..dcmlib import WINDOWS, sha256_file
 from ..errors import InputError, IntegrityError, UsageError
+from .agent import DisplayGate, Transcript, summarise_call
 from .attest import AttestationLedger, DwellPolicy, ViewEvent
 from .httpd import HttpError, Request, Response, Router, binary_response, json_response, sse_response
 from .jobs import JobManager
@@ -72,6 +74,10 @@ class AppState:
         self._ledgers: Dict[str, AttestationLedger] = {}
         self._roots: List[Path] = []
         self.agent_events: Deque[Dict[str, Any]] = deque(maxlen=500)
+        self.display = DisplayGate()
+        self.transcript = Transcript()
+        self._mcp: Any = None
+        self._mcp_lock = threading.Lock()
         for candidate in (getattr(self.settings, "studies_root", None), Path.cwd()):
             if candidate:
                 self.allow(Path(candidate))
@@ -110,6 +116,20 @@ class AppState:
         session = load_session(session_path)
         work_dir = Path(session.get("work_dir") or session_path.parent)
         return session, self.ledger_for(work_dir)
+
+    # -- agent bridge ------------------------------------------------------
+    @property
+    def mcp(self) -> Any:
+        """The MCP server, shared with the window so both see one session."""
+        with self._mcp_lock:
+            if self._mcp is None:
+                from ..mcp.protocol import build_server
+
+                workspace = default_workspace()
+                workspace.mkdir(parents=True, exist_ok=True)
+                self.allow(workspace)
+                self._mcp = build_server(workspace)
+            return self._mcp
 
     def note_agent(self, event: Dict[str, Any]) -> None:
         self.agent_events.append({"ts": time.time(), **event})
@@ -579,12 +599,150 @@ def build_router(state: AppState) -> Router:
                    for p in sorted(directory.glob(pattern))]
         return json_response({"path": str(directory), "entries": entries})
 
-    # -- agent panel ------------------------------------------------------
+    # -- agent bridge -----------------------------------------------------
+    @route("POST", "/mcp")
+    def mcp_endpoint(request: Request) -> Response:
+        """One JSON-RPC message from a bridged MCP client.
+
+        The bridge is a thin stdio shim; the protocol logic stays in
+        ``openrad.mcp``. What happens here that cannot happen over plain stdio
+        is the display gate: a bridged ``page_view`` must pass through the
+        application window before the underlying tool is allowed to run.
+        """
+        message = request.json()
+        server = state.mcp
+        notifications: List[Dict[str, Any]] = []
+        server._writer = notifications.append  # collect instead of writing to a stream
+        try:
+            if _is_page_view(message):
+                blocked = _gate_page_view(state, message)
+                if blocked is not None:
+                    return json_response({"response": blocked, "notifications": notifications})
+            if message.get("method") == "tools/call":
+                params = message.get("params") or {}
+                name = str(params.get("name", ""))
+                arguments = params.get("arguments") or {}
+                state.transcript.record("tool", name=name, arguments=arguments,
+                                        summary=summarise_call(name, arguments))
+            response = server.handle(message)
+        finally:
+            server._writer = lambda _m: None
+        return json_response({"response": response, "notifications": notifications})
+
+    @route("GET", "/agent/state")
+    def agent_state(_: Request) -> Response:
+        return json_response({"window_connected": state.display.connected,
+                              "pending_displays": state.display.pending(),
+                              "transcript": state.transcript.entries()})
+
+    @route("GET", "/agent/stream")
+    def agent_stream(_: Request) -> Response:
+        """Live transcript and display requests for the agent panel."""
+        import queue
+
+        outbox: queue.Queue[Tuple[str, Dict[str, Any]]] = queue.Queue()
+        stop_transcript = state.transcript.subscribe(lambda e: outbox.put(("entry", e)))
+        stop_display = state.display.subscribe(lambda r: outbox.put(("display", r)))
+
+        def events() -> Iterator[Tuple[str, Any]]:
+            try:
+                yield "hello", {"transcript": state.transcript.entries(),
+                                "pending_displays": state.display.pending()}
+                while True:
+                    try:
+                        yield outbox.get(timeout=20)
+                    except queue.Empty:
+                        yield "keepalive", {"ts": time.time()}
+            finally:
+                stop_transcript()
+                stop_display()
+
+        return sse_response(events())
+
+    @route("POST", "/agent/display/{request_id}/shown")
+    def display_shown(request: Request) -> Response:
+        ok = state.display.shown(request.params["request_id"])
+        return json_response({"acknowledged": ok})
+
+    @route("POST", "/agent/display/{request_id}/declined")
+    def display_declined(request: Request) -> Response:
+        reason = str(request.json().get("reason", "declined by the reader"))
+        return json_response({"acknowledged": state.display.decline(request.params["request_id"], reason)})
+
     @route("GET", "/agent/events")
     def agent_events(_: Request) -> Response:
         return json_response({"events": list(state.agent_events)})
 
     return router
+
+
+# ------------------------------------------------------------ display gate
+def _is_page_view(message: Dict[str, Any]) -> bool:
+    return (message.get("method") == "tools/call"
+            and str(((message.get("params") or {}).get("name")) or "") == "page_view")
+
+
+def _gate_page_view(state: AppState, message: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Refuse a bridged ``page_view`` the window did not actually display.
+
+    Returns a JSON-RPC result to send back instead of running the tool, or
+    ``None`` when the page was shown and attested and the tool may proceed.
+    """
+    params = message.get("params") or {}
+    arguments = params.get("arguments") or {}
+    try:
+        session_path = state.mcp.store.resolve(str(arguments.get("session", "")))
+        session = load_session(Path(session_path))
+    except Exception as e:
+        return _tool_error(message, f"Session could not be opened: {e}")
+
+    wanted = str(arguments.get("page", ""))
+    pages = [p for p in session.get("pages", [])
+             if p.get("path") == wanted or Path(str(p.get("path", ""))).name == Path(wanted).name]
+    if not pages:
+        return None  # let the tool produce its own, better error
+    page = pages[0]
+    ledger = state.ledger_for(Path(session.get("work_dir") or Path(session_path).parent))
+
+    already, _ = ledger.page_is_attested(page)
+    if already:
+        return None
+
+    if not state.display.connected:
+        return _tool_error(
+            message,
+            "The OpenRadiology window is not connected, so this page cannot be displayed and therefore "
+            "cannot be marked reviewed. Ask the person to open the application and try again.",
+        )
+
+    state.transcript.record("display_request", page=page.get("path", ""), purpose=page.get("purpose", ""),
+                            summary=f"sayfa gösterilmesi istendi: {Path(str(page.get('path', ''))).name}")
+    outcome = state.display.require_display(str(page.get("path", "")), str(session_path),
+                                            str(page.get("purpose", "")))
+    if outcome.declined:
+        return _tool_error(message, f"The reader declined to display this page: {outcome.declined}")
+    if outcome.shown_at is None:
+        return _tool_error(
+            message,
+            "The window did not display this page in time. Ask the person to bring the OpenRadiology "
+            "window to the front, then call page_view again.",
+        )
+    attested, reason = ledger.page_is_attested(page)
+    if not attested:
+        return _tool_error(
+            message,
+            f"The page was opened but not looked at long enough to count ({reason}). "
+            "It has not been marked reviewed.",
+        )
+    state.transcript.record("display_shown", page=page.get("path", ""),
+                            summary=f"sayfa görüntülendi ve tasdik edildi: {Path(str(page.get('path', ''))).name}")
+    return None
+
+
+def _tool_error(message: Dict[str, Any], text_message: str) -> Dict[str, Any]:
+    """An MCP tool result that reports failure to the model rather than the transport."""
+    return {"jsonrpc": "2.0", "id": message.get("id"),
+            "result": {"content": [{"type": "text", "text": text_message}], "isError": True}}
 
 
 # ------------------------------------------------------------------ pieces
