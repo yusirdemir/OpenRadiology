@@ -1,0 +1,17 @@
+cff-version: 1.2.0
+message: "If you use OpenRadiology in research, please cite it as below."
+title: "OpenRadiology: Deterministic DICOM workbench for traceable AI radiology review"
+type: software
+authors:
+  - family-names: Demir
+    given-names: Yusir
+version: 0.3.0
+date-released: 2026-09-05
+license: MIT
+repository-code: "https://github.com/yusirdemir/OpenRadiology"
+keywords:
+  - radiology
+  - DICOM
+  - large language models
+  - traceability
+  - structured reporting
