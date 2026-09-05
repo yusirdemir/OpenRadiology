@@ -50,3 +50,6 @@ app/src-tauri/binaries/
 app/src-tauri/resources/engine/
 packaging/build/
 packaging/dist/
+
+# stray screenshots from browser-driven verification
+/*.png
