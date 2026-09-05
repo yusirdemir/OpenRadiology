@@ -1,0 +1,170 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/yusirdemir/OpenRadiology/schema/session.schema.json",
+  "title": "OpenRadiology review session (evidence ledger)",
+  "description": "Schema version 2. Produced by `openrad prepare`, edited by the reviewer, validated by `openrad check`. Structural validity is necessary, not sufficient: `openrad check` adds cross-checks (coverage, hashes, endpoints) that JSON Schema cannot express.",
+  "type": "object",
+  "required": ["schema", "created_utc", "repo", "work_dir", "mode", "studies", "toolchain", "pages", "claims",
+               "reader", "context_disclosure", "blind_status", "limitations", "patient_context", "patient_limitations",
+               "comparison", "reading_complete"],
+  "properties": {
+    "schema": {"const": 2},
+    "created_utc": {"type": "string", "format": "date-time"},
+    "finalized_utc": {"type": "string"},
+    "repo": {"type": "string"},
+    "work_dir": {"type": "string"},
+    "studies_root": {"type": "string"},
+    "language": {"type": "string", "enum": ["en", "tr"]},
+    "mode": {"type": "string", "enum": ["single", "comparison"]},
+    "reader": {"type": "string", "description": "Model or person that performed the read"},
+    "context_disclosure": {"type": "string", "description": "What was known before reading (leakage statement), even 'none'"},
+    "blind_status": {"type": "string", "enum": ["not_claimed", "partial", "blinded"]},
+    "clinical_context": {"type": "string"},
+    "limitations": {"type": "array", "items": {"type": "string"}},
+    "recommendations": {"type": "array", "items": {"type": "string"}},
+    "patient_context": {"type": "string"},
+    "patient_limitations": {"type": "string"},
+    "glossary": {"type": "array", "items": {"type": "object", "required": ["term", "explanation"],
+                 "properties": {"term": {"type": "string"}, "explanation": {"type": "string"}}}},
+    "reading_complete": {"type": "boolean"},
+    "validation_note": {"type": "string"},
+    "identity_evidence": {"type": ["object", "null"], "properties": {"path": {"type": "string"}, "sha256": {"$ref": "#/$defs/sha256"}, "basis": {"type": "string"}}},
+    "toolchain": {"type": "array", "items": {"$ref": "#/$defs/hashedFile"}},
+    "comparison": {
+      "type": "object",
+      "required": ["status", "reason", "explanation"],
+      "properties": {
+        "status": {"type": "string", "enum": ["pending", "not_applicable", "compared", "limited", "not_comparable"]},
+        "reason": {"type": "string"},
+        "explanation": {"type": "string"}
+      }
+    },
+    "studies": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/study"}},
+    "pages": {"type": "array", "items": {"$ref": "#/$defs/page"}},
+    "claims": {"type": "array", "items": {"$ref": "#/$defs/claim"}},
+    "report_sha256": {"$ref": "#/$defs/sha256"},
+    "guide_sha256": {"$ref": "#/$defs/sha256"},
+    "report_file": {"type": "string"},
+    "guide_file": {"type": "string"}
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "uid": {"type": "string", "pattern": "^[0-9.]{1,64}$"},
+    "hashedFile": {"type": "object", "required": ["path", "sha256"],
+                   "properties": {"path": {"type": "string"}, "sha256": {"$ref": "#/$defs/sha256"}}},
+    "ref": {
+      "type": "object",
+      "description": "Address of one native pixel in one DICOM instance",
+      "required": ["study_uid", "series_uid", "sop_uid"],
+      "properties": {
+        "study_uid": {"$ref": "#/$defs/uid"},
+        "series_uid": {"$ref": "#/$defs/uid"},
+        "sop_uid": {"$ref": "#/$defs/uid"},
+        "row": {"type": "integer", "minimum": 0},
+        "col": {"type": "integer", "minimum": 0}
+      }
+    },
+    "series": {
+      "type": "object",
+      "required": ["uid", "number", "modality", "sops", "disposition", "reason", "geometry_checked", "required_passes"],
+      "properties": {
+        "uid": {"$ref": "#/$defs/uid"},
+        "number": {"type": "string"},
+        "modality": {"type": "string"},
+        "description": {"type": "string"},
+        "sops": {"type": "object", "additionalProperties": {"type": "object", "required": ["instance", "rows", "cols"],
+                 "properties": {"instance": {"type": "string"}, "rows": {"type": "integer"}, "cols": {"type": "integer"}}}},
+        "disposition": {"type": "string", "enum": ["pending", "read", "excluded", "unsupported"]},
+        "reason": {"type": "string"},
+        "geometry_checked": {"type": "boolean"},
+        "required_passes": {"type": "array", "items": {"type": "string", "pattern": "^[a-z]+:[a-z]+$"},
+                            "description": "Render purposes that must cover every SOP, e.g. lung:native, lung:mip, pet:native, mr:native"}
+      }
+    },
+    "region": {
+      "type": "object",
+      "required": ["status", "text", "explanation", "refs", "pages"],
+      "properties": {
+        "status": {"type": "string", "enum": ["pending", "finding", "no_finding", "limited", "not_covered"]},
+        "text": {"type": "string", "description": "Professional wording"},
+        "explanation": {"type": "string", "description": "Plain-language wording"},
+        "refs": {"type": "array", "items": {"$ref": "#/$defs/ref"}},
+        "pages": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "study": {
+      "type": "object",
+      "required": ["folder", "path", "uid", "date", "time", "modalities", "series", "regions", "source_files"],
+      "properties": {
+        "folder": {"type": "string"},
+        "path": {"type": "string"},
+        "uid": {"$ref": "#/$defs/uid"},
+        "date": {"type": "string", "pattern": "^[0-9]{8}$"},
+        "time": {"type": "string"},
+        "modalities": {"type": "array", "items": {"type": "string"}},
+        "series": {"type": "array", "items": {"$ref": "#/$defs/series"}},
+        "regions": {"type": "object", "additionalProperties": {"$ref": "#/$defs/region"}},
+        "source_files": {"type": "array", "items": {"$ref": "#/$defs/hashedFile"}}
+      }
+    },
+    "page": {
+      "type": "object",
+      "required": ["path", "sha256", "reviewed", "study_uid", "series_uid", "purpose", "sources"],
+      "properties": {
+        "path": {"type": "string"},
+        "sha256": {"$ref": "#/$defs/sha256"},
+        "reviewed": {"type": "boolean", "description": "Set to true only after the page was opened and read"},
+        "study_uid": {"type": "string"},
+        "series_uid": {"type": "string"},
+        "purpose": {"type": "string"},
+        "sources": {"type": "array", "items": {"type": "object", "required": ["study_uid", "series_uid", "sop_uid", "purpose"],
+                    "properties": {"study_uid": {"type": "string"}, "series_uid": {"type": "string"}, "sop_uid": {"type": "string"},
+                                   "instance": {"type": "string"}, "purpose": {"type": "string"}}}}
+      }
+    },
+    "measurement": {
+      "type": "object",
+      "required": ["value", "unit", "method", "evidence_file", "sha256", "ref"],
+      "properties": {
+        "value": {"type": "number"},
+        "unit": {"type": "string", "enum": ["mm", "HU", "SUVbw", "mL", "mm2", "mm3"]},
+        "method": {"type": "string"},
+        "evidence_file": {"type": "string", "description": "Write-once output of `openrad measure --output`"},
+        "sha256": {"$ref": "#/$defs/sha256"},
+        "ref": {"$ref": "#/$defs/ref"},
+        "tool_output": {"type": "string"}
+      }
+    },
+    "timepoint": {
+      "type": "object",
+      "required": ["study_uid", "status", "text", "explanation"],
+      "properties": {
+        "study_uid": {"$ref": "#/$defs/uid"},
+        "status": {"type": "string", "enum": ["present", "not_seen", "not_covered", "indeterminate"]},
+        "text": {"type": "string"},
+        "explanation": {"type": "string"},
+        "refs": {"type": "array", "items": {"$ref": "#/$defs/ref"}}
+      }
+    },
+    "claim": {
+      "type": "object",
+      "required": ["id", "text", "confidence", "priority", "refs", "pages", "patient"],
+      "properties": {
+        "id": {"type": "string"},
+        "text": {"type": "string"},
+        "confidence": {"type": "string", "enum": ["low", "moderate", "high"]},
+        "priority": {"type": "string", "enum": ["important", "routine", "incidental"]},
+        "refs": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/ref"}},
+        "pages": {"type": "array", "minItems": 1, "items": {"type": "string"}},
+        "patient": {"type": "object", "required": ["meaning", "importance", "uncertainty", "discuss_with_doctor"],
+                    "properties": {"meaning": {"type": "string"}, "importance": {"type": "string"},
+                                   "uncertainty": {"type": "string"}, "discuss_with_doctor": {"type": "string"}}},
+        "measurements": {"type": "array", "items": {"$ref": "#/$defs/measurement"}},
+        "comparison": {"type": "object", "required": ["status", "reason"],
+                       "properties": {"status": {"type": "string", "enum": ["new", "increased", "decreased", "stable", "resolved", "indeterminate", "not_comparable"]},
+                                      "reason": {"type": "string"}, "from_study_uid": {"type": "string"}, "to_study_uid": {"type": "string"}}},
+        "timeline": {"type": "array", "items": {"$ref": "#/$defs/timepoint"}}
+      }
+    }
+  }
+}
