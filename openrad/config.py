@@ -173,6 +173,12 @@ SETTINGS: List[Setting] = [
     Setting("pseudonym_salt", "privacy", None, lambda x: None if x in (None, "") else str(x), "Secret salt for deterministic UID/ID pseudonymisation"),
     Setting("date_shift_days", "privacy", None, lambda x: None if x in (None, "") else int(x), "Fixed date shift for anonymize (default derived from salt)"),
     Setting("threads", "compute", 0, _int_range(0, 256), "BLAS/OpenMP thread cap (0 = library default)"),
+    Setting("kroma_max_candidates", "kroma", 16, _int_range(1, 32), "Maximum experimental lung candidates"),
+    Setting("kroma_tau", "kroma", 0.25, float, "Normalized blob threshold (0, 1]"),
+    Setting("kroma_gamma", "kroma", 2.0, float, "Nonnegative vessel suppression exponent"),
+    Setting("kroma_c_hu", "kroma", 50.0, _float_pos, "Hessian structure-strength scale in HU"),
+    Setting("kroma_block_size", "kroma", 64, _int_range(8, 128), "Convolution core edge in voxels"),
+    Setting("kroma_memory_mb", "kroma", 4096, _int_range(64, 1048576), "Array working-set guard in MiB"),
 ]
 BY_KEY: Dict[str, Setting] = {s.key: s for s in SETTINGS}
 
@@ -334,6 +340,14 @@ step_mm = 1.0
 [measure]
 convention = "fleischner"   # fleischner | recist
 region_radius_mm = 40.0
+
+[kroma]
+kroma_max_candidates = 16
+kroma_tau = 0.25
+kroma_gamma = 2.0
+kroma_c_hu = 50.0
+kroma_block_size = 64
+kroma_memory_mb = 4096
 
 [pet]
 suv_threshold = 2.5

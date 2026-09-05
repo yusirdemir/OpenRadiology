@@ -22,7 +22,7 @@ something they can look at. They cannot decode 16-bit pixels, they lose track of
 on, they have no caliper, and when uncertain they tend to invent a plausible sentence.
 
 OpenRadiology is the missing physical layer. It is a small, pure-Python engine
-(`pydicom` + `numpy` + `Pillow`, no GPU, no model weights) that:
+(`pydicom` + `numpy` + `scipy` + `Pillow`, no GPU, no model weights) that:
 
 1. **Renders** every native slice of a study into labelled, orientation-marked contact sheets sized for
    the target vision model (lung/soft/bone windows, 8–10 mm slab MIP, anisotropy-correct reformats with
@@ -124,7 +124,7 @@ pip install -e ".[dev]"     # pytest, ruff, mypy
 openrad doctor              # verifies interpreter, decoders, config and writable paths
 ```
 
-Requirements: Python 3.9+, `pydicom ≥ 2.4`, `numpy ≥ 1.22`, `Pillow ≥ 9` (`tomli` on Python < 3.11).
+Requirements: Python 3.9+, `pydicom ≥ 2.4`, `numpy ≥ 1.22`, `scipy ≥ 1.9`, `Pillow ≥ 9.1` (`tomli` on Python < 3.11).
 Runs on macOS, Linux and Windows on a laptop; a 600-slice thin-section chest CT renders in seconds.
 Without installing: `python -m openrad <command>` from the repository root works as well.
 
@@ -400,3 +400,63 @@ clinical decision. The software is provided "as is" without warranty of any kind
 If you use OpenRadiology in research, cite it via [`CITATION.cff`](CITATION.cff). Distributed under
 the MIT License. Guideline content remains the property of the respective societies and is cited, not
 reproduced.
+
+### Experimental KROMA-3D lesion passports
+
+```bash
+openrad passport STUDY_DIR --output OUT_DIR
+openrad passport STUDY_DIR --series 4 --output OUT_DIR --max-candidates 32 --detail-cards --json
+```
+
+`passport` creates a 1024×1024 depth-coloured coronal overview, one or two
+1024×1024 passport sheets (16 candidates each), and `passport.json`. A single
+CT series is selected automatically; multiple CT series require `--series`.
+Only regular, canonical axial CT stacks with HU rescale metadata are accepted.
+The output directory must be new or empty. JSON includes zero-based isotropic
+and fractional source `(z,y,x)` coordinates, patient LPS millimetres, nearest
+source SOP UID, scores, selected filter scale, image/card locations and warnings.
+It contains source UIDs for traceability; this command is **not de-identification**.
+
+The Python API `openrad.kroma.create_passport(volume_hu, output_path,
+spacing_zyx=(1,1,1), origin_lps=(0,0,0))` also accepts synthetic arrays.
+It uses centre-aligned linear resampling to exactly 1 mm, enclosed-air lung
+masking, and scale-normalized 3D Gaussian Hessians at 1, 1.5, 2.2, 3.3 and 5 mm.
+Separable convolutions share intermediate derivatives, with support-sized halos
+and vectorized symmetric eigensolvers operating only on mask voxels in bounded
+blocks. Truncated second-derivative kernels reject constant intensity. Float32
+feature maxima are merged in place across scales, and normalization is global,
+so changing block boundaries does not change scores. Vessel suppression shifts
+HU by the lung-window floor before multiplying, avoiding brightening negative HU.
+Frangi scores retain their native dimensionless range, with bright-object sign
+gating; blob scores are normalized by the largest response in the volume.
+
+`--block-size` (default 64) controls convolution working memory;
+`--memory-mb` (default 4096 MiB) rejects estimated array allocations over budget.
+This is a conservative array estimate, **not a process RSS limit**; DICOM decoder,
+Python and numerical-library overhead need additional memory. Source voxels and
+three feature volumes remain in memory; no full-volume Hessian is retained.
+Candidate extraction uses 5-voxel maxima, deterministic plateau suppression and
+a bounded shortlist; `--tau` defaults to 0.25 and `--gamma` to 2.
+
+Each candidate shows axial, coronal and sagittal planes over a 48 mm FOV, with
+red blob / green vessel overlays and the underlying HU window in blue. Sheet
+cards use **2×** nearest-neighbour magnification, in two columns and eight rows.
+Sixteen 48 mm, three-plane cards at 3× cannot fit a 1024×1024 sheet;
+`--detail-cards` additionally exports separate **3×** PNG cards. The OCR badge's
+`~mm` value is a **winning-filter-scale equivalent sphere estimate**, not a
+segmented or clinically measured diameter. HU is the centre voxel value.
+
+These are experimental candidate summaries, not a diagnosis or exhaustive review
+and they do not mark session coverage as reviewed. The mask can exclude pleural
+or opaque lesions and include other air cavities; 1 mm resampling, projection,
+thresholds and the candidate cap can omit lesions. Zero candidates does not mean
+normal imaging. Colour overlays can saturate. A single winning-depth MIP cannot
+preserve every superposed lesion or guarantee rainbow vessel trajectories.
+Synthetic tests establish engineering behaviour only: there is no demonstrated
+1 mm sensitivity guarantee, model diagnostic equivalence or measured token saving.
+
+All six processing controls also follow the existing configuration precedence:
+CLI > `OPENRAD_KROMA_*` environment > TOML `[kroma]` > defaults. For example,
+`OPENRAD_KROMA_MEMORY_MB=2048` or `[kroma] kroma_memory_mb = 2048` sets the memory
+guard. The other keys are `kroma_max_candidates`, `kroma_tau`, `kroma_gamma`,
+`kroma_c_hu` (`--c-hu`, default 50 HU) and `kroma_block_size`.

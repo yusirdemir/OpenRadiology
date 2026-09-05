@@ -34,14 +34,15 @@ requires-python = ">=3.9"
 dependencies = [
     "pydicom>=2.4.0",
     "numpy>=1.22.0",
-    "Pillow>=9.0.0",
+    "scipy>=1.9.0",
+    "Pillow>=9.1.0",
     "tomli>=2.0; python_version < '3.11'",
 ]
 
 [project.optional-dependencies]
 # Compressed transfer syntaxes (JPEG 2000, JPEG-LS, RLE) need a decoder plugin.
 codecs = ["pylibjpeg>=2.0", "pylibjpeg-libjpeg>=2.0", "pylibjpeg-openjpeg>=2.0"]
-dev = ["pytest>=7.0.0", "ruff>=0.4.0", "mypy>=1.8"]
+dev = ["pytest>=7.0.0", "ruff>=0.4.0", "mypy>=1.8", "jsonschema>=4.0"]
 
 [project.scripts]
 openrad = "openrad.cli:main"

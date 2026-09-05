@@ -44,6 +44,7 @@ COMMANDS: Dict[str, str] = {
     "inventory": "Inspect every DICOM series in a study folder (matrix, spacing, kernel, timing)",
     "prepare": "Create a review session for one study or a chronological comparison",
     "ct-render": "Render systematic CT contact sheets (lung/soft/bone, slab MIP, coronal/sagittal)",
+    "passport": "Render experimental KROMA-3D lung candidate overview, passport sheets and coordinate JSON",
     "mr-render": "Render MR contact sheets per sequence (T1, T2, FLAIR, DWI, SWI) and pre/post pairs",
     "pet-render": "Render PET/CT: SUVbw conversion, rotating MIP, hotspot table, fused axial tiles",
     "zoom": "Magnified multi-slice view with pixel grid and scale bar for lesion-vs-vessel decisions",
@@ -69,6 +70,8 @@ def _runner(command: str) -> Runner:
         return lambda argv: cr_main([command, *(argv or [])])
     elif command == "ct-render":
         from .ct_render import main
+    elif command == "passport":
+        from .kroma import main
     elif command == "mr-render":
         from .mr_render import main
     elif command == "pet-render":

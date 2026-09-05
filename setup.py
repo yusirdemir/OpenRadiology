@@ -15,6 +15,6 @@ setup(
     packages=["openrad", "openrad.locales", "openrad.mcp"],
     package_data={"openrad": ["py.typed", "schema/*.json", "locales/*.json"]},
     python_requires=">=3.9",
-    install_requires=["pydicom>=2.4.0", "numpy>=1.22.0", "Pillow>=9.0.0", "tomli>=2.0; python_version < '3.11'"],
+    install_requires=["pydicom>=2.4.0", "numpy>=1.22.0", "scipy>=1.9.0", "Pillow>=9.1.0", "tomli>=2.0; python_version < '3.11'"],
     entry_points={"console_scripts": ["openrad=openrad.cli:main"]},
 )

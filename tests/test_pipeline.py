@@ -398,7 +398,8 @@ class SessionTests(TempCase):
 
     def _complete_session(self, lang="en"):
         p = make_study(self.root, "a")
-        path = self._prepare(["a"], lang=lang)
+        # Also used by SchemaTests, which does not inherit SessionTests._prepare.
+        path, _, _ = quiet(lambda: prepare(self.root, ["a"], lang=lang))
         v = Volume(read_headers(p))
         work = path.parent
         render_axial(v, work, "S1", "lung", 1, (0, 32, 0, 32))

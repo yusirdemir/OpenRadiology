@@ -22,7 +22,7 @@ from typing import Any, Dict, List, Optional, Sequence
 from . import __version__
 from .config import load_settings
 
-REQUIRED = ("pydicom", "numpy", "PIL")
+REQUIRED = ("pydicom", "numpy", "scipy", "PIL")
 OPTIONAL = ("pylibjpeg", "openjpeg", "gdcm", "tomli", "tomllib", "pytest", "ruff")
 
 
