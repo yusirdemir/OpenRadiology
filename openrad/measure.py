@@ -244,10 +244,16 @@ def build_parser(cfg: Optional[Settings] = None) -> argparse.ArgumentParser:
     return ap
 
 
-def run(a: argparse.Namespace, cfg: Optional[Settings] = None) -> Report:
+def run(a: argparse.Namespace, cfg: Optional[Settings] = None, volume: Optional[Volume] = None) -> Report:
+    """Measure on one series.
+
+    ``volume`` lets a long-lived caller (the desktop sidecar) hand in a stack it
+    has already decoded. The measurement mathematics is unchanged either way;
+    injecting the volume only avoids re-reading several hundred files per click.
+    """
     cfg = cfg or load_settings()
     rep = Report()
-    v = Volume(series_by_number(a.study_dir, a.series), allow_tilt=a.allow_tilt)
+    v = volume if volume is not None else Volume(series_by_number(a.study_dir, a.series), allow_tilt=a.allow_tilt)
     unit, factor = "HU", 1.0
     if v.modality == "PT":
         factor_or_none, info = suv_factor(v.ds[0], a.weight, datasets=v.ds, uptake_window=cfg.uptake_window_min)

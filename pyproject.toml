@@ -46,6 +46,7 @@ dev = ["pytest>=7.0.0", "ruff>=0.4.0", "mypy>=1.8", "jsonschema>=4.0"]
 
 [project.scripts]
 openrad = "openrad.cli:main"
+openrad-server = "openrad.server.__main__:main"
 
 [project.urls]
 Homepage = "https://github.com/yusirdemir/OpenRadiology"
@@ -54,7 +55,7 @@ Issues = "https://github.com/yusirdemir/OpenRadiology/issues"
 Changelog = "https://github.com/yusirdemir/OpenRadiology/blob/main/CHANGELOG.md"
 
 [tool.setuptools]
-packages = ["openrad", "openrad.locales", "openrad.mcp"]
+packages = ["openrad", "openrad.locales", "openrad.mcp", "openrad.server"]
 
 [tool.setuptools.package-data]
 openrad = ["py.typed", "schema/*.json", "locales/*.json"]
@@ -71,7 +72,9 @@ target-version = "py39"
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "B", "UP"]
-ignore = ["E731", "UP006", "UP007", "UP035"]
+# UP006/UP007/UP045 are the same rule family: this package supports Python 3.9,
+# where `X | None` and `list[int]` are not valid at runtime in every position.
+ignore = ["E731", "UP006", "UP007", "UP035", "UP045"]
 
 [tool.mypy]
 python_version = "3.9"
