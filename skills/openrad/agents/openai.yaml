@@ -1,0 +1,4 @@
+interface:
+  display_name: "OpenRadiology Review"
+  short_description: "Traceable DICOM preliminary review, multi-study comparison and patient guide"
+  default_prompt: "Use $openrad on the supplied study folders. Render every native slice, look at every page before marking it reviewed, cite SOPInstanceUID/row/col for each finding, measure only with `openrad measure --output`, then run `openrad check` and `openrad finish`. Compare all supplied studies chronologically. Produce the professional report and the patient companion guide in the requested language (default tr)."

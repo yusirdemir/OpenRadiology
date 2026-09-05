@@ -1,0 +1,19 @@
+---
+description: OpenRadiology image-first DICOM review workflow (CT, PET/CT, brain MRI)
+globs: ["**/*.dcm", "DCIM/**", ".cache/create-report/**", "reports/**", ".openrad.toml"]
+alwaysApply: false
+---
+Follow `skills/openrad/SKILL.md` verbatim; it is the single source of truth for the workflow.
+
+Three rules: no look, no claim; every statement carries StudyInstanceUID/SeriesInstanceUID/SOPInstanceUID
++ row/col + inspected PNG path; numbers come only from `openrad measure --output` evidence files.
+
+Order of operations: `openrad doctor` -> `openrad prepare` -> `openrad inventory` -> render
+(`ct-render --grid 3x3` scan, `--grid 2x2` detail; `pet-render`; `mr-render`) -> `openrad register` ->
+look at every page -> `openrad zoom` / `openrad measure` -> fill session.json
+(`openrad/schema/session.schema.json`) -> `openrad check --json` -> `openrad finish`.
+
+Configuration precedence: flags > OPENRAD_* env > .openrad.toml / [tool.openrad] > ~/.config/openrad/config.toml
+> defaults. English is the default language; `OPENRAD_LANG=<locale>` switches the generated documents to any locale in `openrad/locales/`.
+Exit codes: 2 usage, 3 input, 4 geometry, 5 validation, 6 quantitation, 7 integrity. Never bypass a refusal
+by editing the session or the config. Never commit DICOM, session JSON, reports, salts or map files.
