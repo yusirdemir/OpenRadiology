@@ -60,7 +60,9 @@
       "indeterminate": "change indeterminate",
       "not_comparable": "not comparable"
     },
-    "date_format": "%Y-%m-%d"
+    "date_format": "%Y-%m-%d",
+    "pass_scope": "Pass scope",
+    "pass_scope_line": "{series}: {purpose} restricted to z {zmin}..{zmax} mm; {n} slices without target anatomy not rendered ({basis})"
   },
   "regions": {
     "technique": "Technique and image quality",

@@ -13,7 +13,7 @@ agent or clinician who must look at the rendered sheets.
 """
 from __future__ import annotations
 
-__version__ = "0.4.0"
+__version__ = "0.4.1"
 __author__ = "Yusir Demir"
 __license__ = "MIT"
 

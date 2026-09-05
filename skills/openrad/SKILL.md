@@ -111,10 +111,25 @@ grid does not fit the vision budget it shrinks and says so on `stderr`.
 
 Thoracic CT:
 ```bash
-openrad ct-render <folder> --series <thin> --windows lung --step 1 --mip 10 --mpr --grid 3x3 --output <work_dir>/lung
-openrad ct-render <folder> --series <soft> --windows soft,bone --step 1 --mpr --grid 2x2 --output <work_dir>/soft
+openrad ct-render <folder> --series <thin_lung> --windows lung --step 1 --mip 10 --mpr --auto-z lung --grid 3x3 --output <work_dir>/lung
+openrad ct-render <folder> --series <thick_soft> --windows soft,bone --step 1 --mpr --grid 3x3 --output <work_dir>/soft
 ```
-`required_passes` → `["lung:native", "lung:mip"]` and `["soft:native", "bone:native"]`.
+`required_passes` → `["lung:native", "lung:mip"]` for the thin lung series and `["soft:native", "bone:native"]`
+for the soft-tissue series. Series choice (measured on a 385-slice, 1 mm study: 166 → ≈85 sheets, no
+finding lost):
+- **Lungs**: the thinnest axial series (≤ 1.5 mm). `--auto-z lung` limits the lung and MIP passes to the
+  slices that actually contain aerated lung (neck and abdomen slices carry no lung); the renderer writes the
+  skipped SOPs and the rule into `render_index.json`, `register` copies them to `series.pass_scope`, `check`
+  accepts them and `finish` prints the scope in the technique block. The skipped slices stay covered by the
+  soft-tissue pass.
+- **Mediastinum, hila, upper abdomen, bones**: a thick axial reconstruction (3–5 mm, soft kernel) when the
+  study has one. A 1 mm soft-tissue series at 512 px per tile is too noisy to judge nodes or renal lesions
+  and costs 4–5× the pages; keep the thin soft series for `zoom`/`measure` only and mark it `excluded`
+  with that reason (or `read` only if you actually open all its pages). If no thick series exists, render
+  the thin soft series with `--step 3`.
+- MPR positions are spread over the body bounding box (never the empty field of view).
+- Vision budget: open at most ~20 sheets per request; a larger batch is silently truncated by the client
+  ("media removed"), and a page that was never displayed must not be marked reviewed.
 
 PET/CT:
 ```bash
@@ -158,7 +173,16 @@ openrad measure <folder> --series <S> --instance <N> --auto <r,c> --lesion-type 
   the rule in the measurement `method`.
 - Copy the printed `sha256=` into `measurements[].sha256` and the file path into `evidence_file`.
 - Region growing (`--auto`, `--auto3d`) is exploratory; when it warns about leaks or box contact,
-  say so and prefer caliper points.
+  say so and prefer caliper points. A pleural-based mass leaks into the chest wall at `--thr -300`: use
+  `--box` and report caliper axes. A calcified nodule leaks into the adjacent vessel at `--thr -300`:
+  grow with `--thr 150` (calcium only) and quote the threshold in `method`.
+- Coordinates: read `row,col` off the `zoom` grid, never off a contact sheet by eye. If you must start
+  from a 3x3 sheet, `native = sheet_px − 514 × tile_index` (512 px tile + 2 px gutter) per axis, then
+  confirm on the zoom grid; a seed that lands outside the lesion aborts with "seed value … outside".
+- Diaphragm dome, cardiophrenic fat and vessel turns mimic nodules on axial lung tiles: one coronal
+  `zoom --plane cor` settles it before any measurement.
+- HU statistics need a low-noise slice: sample ROI/profile on the thick series (`--series <thick>`), not
+  on the 1 mm soft series; state the series in `method`.
 
 ### Step 6 — Fill the ledger
 Follow `templates/<lang>/report_template.md`; the machine-readable contract is

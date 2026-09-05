@@ -7,6 +7,27 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **`openrad ct-render --auto-z lung`**: bounds the lung-window and slab-MIP passes to the longest run of
+  slices that contain enclosed air (padded 8 mm). The skipped SOPs and the rule are written to
+  `render_index.json` under `_scope`; `register` stores them as `series.pass_scope`, `check` no longer
+  demands those slices for the scoped pass (and insists on a stated basis), and `finish` prints the scope
+  in the technique block. On a 385-slice study this removed 82 lung sheets' worth of neck and abdomen.
+- `Volume.lung_z_bounds`, `Volume.lung_slice_fraction`, `Volume.mpr_positions`.
+
+### Changed
+- Coronal/sagittal reformat positions are spread over the body bounding box instead of the full field of
+  view, so no reformat tile shows empty air beside the patient.
+- `mark_source` accepts the list of slices a tile is evidence for; `save_page` flattens them.
+- Skill and checklists: thick (3–5 mm) soft reconstruction for mediastinum/abdomen/bone, thin series for
+  lungs and calipers; calcium threshold for calcified nodules; box + calipers for pleural-based masses;
+  ≤ 20 sheets per vision request; coronal zoom before calling a cardiophrenic "nodule".
+
+### Fixed
+- Slab-MIP sheets recorded only the slab centre as their source, so a `lung:mip` pass could never be
+  completed (`check` reported hundreds of "unread" slices). Every slice inside the slab is now a source.
+- Reformat (MPR) sheets carried no provenance; `register` left their study/series empty and `check`
+  rejected them. They now carry the volume's study/series with purpose `<window>:mpr`.
+
 - **Desktop application** (`app/`): a Tauri v2 window for macOS and Windows with a WebGL2 slice
   viewer, the anatomical sweep as a working checklist, measurement tools wired to the engine, a
   comparison mode and a report screen. Turkish and English, with region names read from the engine's

@@ -6,10 +6,12 @@ node map (Rusch 2009) and TNM 9th edition descriptors, slab-MIP detection litera
 Jankowski 2019).
 
 Use thin series (≤ 1.5 mm, ideally 1.0 mm) for lungs: native lung window, overlapping regional views,
-plus an 8–10 mm sliding-slab MIP (`openrad ct-render --mip 10`). Use a soft reconstruction for
-mediastinum and bone; inspect thin soft-tissue sections when needed. Read every native slice, then
-coronal/sagittal views. Overview sampling alone is not full coverage. Every positive item goes into the
-lesion ledger with series/instance/SOP/z and a measurement.
+plus an 8–10 mm sliding-slab MIP (`openrad ct-render --mip 10`), bounded to the slices that contain lung
+(`--auto-z lung`; the scope is recorded in the ledger). Use a thick (3–5 mm) soft reconstruction for
+mediastinum, hila, upper abdomen and bone; inspect thin soft-tissue sections only for targeted zoom and
+calipers. Read every native slice of each pass, then coronal/sagittal views. Overview sampling alone is
+not full coverage. Every positive item goes into the lesion ledger with series/instance/SOP/z and a
+measurement.
 
 ## Technique block (from inventory, not from the report)
 - Scanner, kVp/mAs, kernel, `PixelPaddingValue`, `GantryDetectorTilt`, contrast agent tag (absence of
@@ -79,7 +81,10 @@ lesion ledger with series/instance/SOP/z and a measurement.
 - Vessel relationship: feeding vessel, vessel convergence, encasement/abutment (state the
   vessel), bronchus cut-off or narrowing.
 - Chest wall/mediastinal contact: length of contact, fat plane preserved or not, rib destruction.
+- Calcified nodule: grow at `--thr 150` (calcium only); the −300 HU default merges the adjacent vessel.
+  Pleural-based mass: `--box` plus caliper axes; region growing leaks into the chest wall.
 - Distinguish: end-on vessel (follow on consecutive slices/MIP), scar (linear, pleural-based),
+  diaphragm/liver dome at the cardiophrenic angle (round on 3–6 axial slices; coronal zoom shows the dome),
   atelectasis (volume loss, bronchovascular crowding), mucus plug (branching, low density),
   granuloma (calcified), intrapulmonary node (perifissural, triangular/oval, < 1 cm), postoperative
   staple line artefact, suture granuloma.

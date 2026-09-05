@@ -78,7 +78,13 @@
         "reason": {"type": "string"},
         "geometry_checked": {"type": "boolean"},
         "required_passes": {"type": "array", "items": {"type": "string", "pattern": "^[a-z]+:[a-z]+$"},
-                            "description": "Render purposes that must cover every SOP, e.g. lung:native, lung:mip, pet:native, mr:native"}
+                            "description": "Render purposes that must cover every SOP, e.g. lung:native, lung:mip, pet:native, mr:native"},
+        "pass_scope": {"type": "object",
+                       "description": "Per-pass coverage restriction written by the renderer (ct-render --auto-z): SOPs in skipped_sops hold no anatomy for that pass and are not demanded by check; basis states the rule",
+                       "additionalProperties": {"type": "object", "required": ["basis", "skipped_sops"],
+                                                "properties": {"zmin": {"type": "number"}, "zmax": {"type": "number"},
+                                                               "basis": {"type": "string", "minLength": 1},
+                                                               "skipped_sops": {"type": "array", "items": {"type": "string"}}}}}
       }
     },
     "region": {

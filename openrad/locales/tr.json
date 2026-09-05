@@ -60,7 +60,9 @@
       "indeterminate": "değişim belirsiz",
       "not_comparable": "karşılaştırılamıyor"
     },
-    "date_format": "%d.%m.%Y"
+    "date_format": "%d.%m.%Y",
+    "pass_scope": "Geçiş kapsamı",
+    "pass_scope_line": "{series}: {purpose} geçişi z {zmin}..{zmax} mm ile sınırlı; hedef anatomi içermeyen {n} kesit bu geçişte render edilmedi ({basis})"
   },
   "regions": {
     "technique": "Teknik ve görüntü kalitesi",

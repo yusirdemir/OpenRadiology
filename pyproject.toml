@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "openradiology"
-version = "0.4.0"
+version = "0.4.1"
 description = "Deterministic DICOM workbench for traceable AI radiology review (CT, PET/CT, brain MRI): zero-GPU rendering, calibrated HU/SUV measurement, SHA-256 evidence ledger."
 readme = "README.md"
 authors = [{ name = "Yusir Demir" }]

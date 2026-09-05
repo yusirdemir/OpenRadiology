@@ -20,15 +20,16 @@ Design (see docs/references.md):
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from pathlib import Path
-from typing import List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 from PIL import Image
 
 from .config import VISION_PROFILES, Settings, load_settings
-from .dcmlib import (WINDOWS, Volume, contact_sheet, label, mark_source, orientation_marks, save_page, scale_bar,
+from .dcmlib import (save_json, WINDOWS, Volume, contact_sheet, label, mark_source, orientation_marks, save_page, scale_bar,
                      series_by_number, to_image, window, z_ruler)
 from .errors import GeometryError, UsageError
 from .grid import GridSpec, fit_grid, font_size_for
@@ -63,7 +64,10 @@ def render_axial(v: Volume, out: Path, prefix: str, wname: str, step_mm: float, 
         label(im, f"img {v.instance(k)}  z {v.z[k]:.0f}" + ("  MIP" if half else ""), size=size)
         orientation_marks(im, "AX", size=size, iop=v.iop)
         scale_bar(im, v.col_sp, size=size)
-        mark_source(im, v, k, f"{wname}:mip" if half else f"{wname}:native")
+        if half:
+            mark_source(im, v, k, f"{wname}:mip", range(max(0, k - half), min(len(v.z), k + half + 1)))
+        else:
+            mark_source(im, v, k, f"{wname}:native")
         tiles.append(im)
         if len(tiles) == spec.per_page:
             pages += 1
@@ -85,8 +89,7 @@ def render_mpr(v: Volume, out: Path, prefix: str, wname: str, bbox: BBox, n: int
         # slab thickness is measured along the axis being collapsed: rows for coronal, columns for sagittal
         sp = v.row_sp if kind == "coronal" else v.col_sp
         thick = max(1, int(round(thick_mm / sp))) if thick_mm else 1
-        lo, hi = (r0, r1) if kind == "coronal" else (c0, c1)
-        positions = np.linspace(lo + (hi - lo) * 0.06, hi - (hi - lo) * 0.06, n).astype(int)
+        positions = v.mpr_positions(kind, n)
         tiles: List[Image.Image] = []
         for pos in positions:
             arr = v.coronal(pos, thick) if kind == "coronal" else v.sagittal(pos, thick)
@@ -103,16 +106,16 @@ def render_mpr(v: Volume, out: Path, prefix: str, wname: str, bbox: BBox, n: int
             orientation_marks(im, size=size, iop=[1, 0, 0, 0, 0, -1] if kind == "coronal" else [0, 1, 0, 0, 0, -1])
             z_ruler(im, float(v.z[-1]), float(v.z[0]), size=max(9, size - 3))
             scale_bar(im, (v.col_sp if kind == "coronal" else v.row_sp) * (arr.shape[1] / im.width), size=size)
+            # A reformat is built from the whole stack; the middle slice stands in as its
+            # provenance so the sheet registers against the right study/series. It is an
+            # auxiliary pass (``*:mpr``) and never counts as native coverage.
+            mark_source(im, v, len(v.z) // 2, f"{wname}:mpr")
             tiles.append(im)
         tw, th = max(t.width for t in tiles), max(t.height for t in tiles)
         tiles = [t.resize((tw, th)) if t.size != (tw, th) else t for t in tiles]
         spec = fit_grid(tw, th, grid, max_side, min_cols=2)
         for i in range(0, len(tiles), spec.per_page):
-            p = out / f"{prefix}_{wname}_{kind}_{i // spec.per_page + 1:02d}.png"
-            sheet = contact_sheet(tiles[i:i + spec.per_page], spec.cols)
-            assert sheet is not None
-            sheet.save(p)
-            files.append(p)
+            files.append(save_page(tiles[i:i + spec.per_page], spec.cols, out / f"{prefix}_{wname}_{kind}_{i // spec.per_page + 1:02d}.png"))
     return files
 
 
@@ -170,6 +173,10 @@ def build_parser(cfg: Optional[Settings] = None) -> argparse.ArgumentParser:
     ap.add_argument("--mpr-thick", type=float, default=0.0, help="MIP slab thickness (mm) for reformats")
     ap.add_argument("--zmin", type=float)
     ap.add_argument("--zmax", type=float)
+    ap.add_argument("--auto-z", choices=["lung"], default=None,
+                    help="restrict the axial passes to the slices that contain aerated lung (longest run of slices "
+                         "with >=0.5%% enclosed air, padded 8 mm); the skipped slices are recorded in render_index.json "
+                         "as pass scope so `openrad check` does not demand them for the lung passes")
     ap.add_argument("--no-axial", action="store_true")
     ap.add_argument("--allow-tilt", action="store_true", help="accept gantry-tilted stacks (reformats are de-sheared per slice)")
     add_grid_arguments(ap, cfg)
@@ -203,6 +210,19 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     if v.is_tilted:
         warn(f"tilt {v.tilt_info()}")
     written: List[Path] = []
+    scope: Dict[str, Dict[str, Any]] = {}
+    if a.auto_z == "lung":
+        lo, hi = v.lung_z_bounds()
+        a.zmin = lo if a.zmin is None else max(a.zmin, lo)
+        a.zmax = hi if a.zmax is None else min(a.zmax, hi)
+        outside = [v.sop_uid(k) for k in range(len(v.z)) if not (a.zmin <= v.z[k] <= a.zmax)]
+        basis = (f"--auto-z lung: longest run of slices with >=0.5% enclosed air, padded 8 mm -> z {a.zmin:.1f}..{a.zmax:.1f} mm; "
+                 f"{len(outside)} of {len(v.z)} slices contain no aerated lung and were not rendered in this pass")
+        progress(f"auto-z lung: z {a.zmin:.1f}..{a.zmax:.1f} mm, {len(outside)} slices outside")
+        for wname in wnames:
+            scope[f"{wname}:native"] = {"zmin": a.zmin, "zmax": a.zmax, "basis": basis, "skipped_sops": outside}
+            if a.mip and wname == "lung":
+                scope[f"{wname}:mip"] = {"zmin": a.zmin, "zmax": a.zmax, "basis": basis, "skipped_sops": outside}
     for wname in wnames:
         if not a.no_axial:
             written += render_axial(v, a.output, prefix, wname, a.step, bbox, 0, a.zmin, a.zmax, a.grid, max_side)
@@ -212,6 +232,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             written += render_mpr(v, a.output, prefix, wname, bbox, a.mpr_n, a.mpr_thick, a.grid, max_side)
         if a.regions:
             written += render_regions(v, a.output, wname, a.step)
+    if scope:
+        index_path = a.output / "render_index.json"
+        index = json.loads(index_path.read_text()) if index_path.exists() else {}
+        index.setdefault("_scope", {}).update({k: dict(sc, study_uid=v.study_uid, series_uid=v.series_uid) for k, sc in scope.items()})
+        save_json(index, index_path)
     for p in written:
         print(p)
     progress(f"[done] {len(written)} sheets -> {a.output}")

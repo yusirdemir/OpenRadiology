@@ -390,6 +390,56 @@ class Volume:
         c0, c1 = max(0, cols[0] - margin), min(self.vol.shape[2], cols[-1] + margin + 1)
         return int(r0), int(r1), int(c0), int(c1)
 
+    def lung_slice_fraction(self, air_thr: float = -500, body_thr: float = -500) -> np.ndarray:
+        """Per-slice fraction of the image that is aerated tissue enclosed by the body.
+
+        Body = voxels above ``body_thr`` with holes filled; aerated = enclosed voxels below
+        ``air_thr``. Lung, trachea and bowel gas all count; the caller separates them by
+        contiguity (the lungs form one long run of slices, bowel gas does not).
+        """
+        from scipy import ndimage
+        out = np.zeros(len(self.z), dtype=float)
+        for k in range(len(self.z)):
+            sl = self.vol[k]
+            body = ndimage.binary_fill_holes(sl > body_thr)
+            out[k] = float(np.count_nonzero(body & (sl < air_thr))) / sl.size
+        return out
+
+    def lung_z_bounds(self, min_fraction: float = 0.005, margin_mm: float = 8.0) -> Tuple[float, float]:
+        """z range (min, max, mm) of the longest run of slices holding aerated lung.
+
+        Slices above the apices (neck) and below the bases (abdomen) carry no lung and need
+        no lung-window or slab-MIP pass; they stay covered by the soft-tissue passes. The
+        run is padded by ``margin_mm`` on both ends so the apices and the costophrenic
+        recesses are never clipped. Raises ``GeometryError`` when no slice qualifies.
+        """
+        frac = self.lung_slice_fraction()
+        best: Tuple[int, int] = (-1, -1)
+        start = None
+        for k, ok in enumerate(list(frac >= min_fraction) + [False]):
+            if ok and start is None:
+                start = k
+            elif not ok and start is not None:
+                if best[0] < 0 or (k - start) > (best[1] - best[0]):
+                    best = (start, k)
+                start = None
+        if best[0] < 0:
+            raise GeometryError("No slice contains enough aerated lung to bound the lung pass; render without --auto-z")
+        pad = int(round(margin_mm / abs(self.dz)))
+        a, b = max(0, best[0] - pad), min(len(self.z) - 1, best[1] - 1 + pad)
+        lo, hi = sorted((float(self.z[a]), float(self.z[b])))
+        return lo, hi
+
+    def mpr_positions(self, kind: str, n: int, inset: float = 0.06) -> List[int]:
+        """Row (coronal) or column (sagittal) indices for ``n`` reformats spread over the body.
+
+        Positions are spread inside the body bounding box, not the full field of view, so a
+        sheet never spends tiles on empty air beside the patient.
+        """
+        r0, r1, c0, c1 = self.body_bbox()
+        lo, hi = (r0, r1) if kind == "coronal" else (c0, c1)
+        return [int(x) for x in np.linspace(lo + (hi - lo) * inset, hi - (hi - lo) * inset, n)]
+
     # ------------------------------------------------------------- reformats
     def slab_mip(self, k: int, half_slices: int) -> np.ndarray:
         v = self.rectilinear()
@@ -586,11 +636,27 @@ def save_json(obj: Any, path: Path) -> None:
     path.write_text(json.dumps(obj, indent=2, ensure_ascii=False, default=str), encoding="utf-8")
 
 
-def mark_source(im: Image.Image, v: Volume, k: int, purpose: str) -> Image.Image:
-    """Attach the DICOM provenance of a tile so ``save_page`` can index coverage."""
-    im.info["review_source"] = {"study_uid": v.study_uid, "series_uid": v.series_uid,
-                                "sop_uid": v.sop_uid(k), "instance": v.instance(k), "purpose": purpose}
+def mark_source(im: Image.Image, v: Volume, k: int, purpose: str,
+                slices: Optional[Iterable[int]] = None) -> Image.Image:
+    """Attach the DICOM provenance of a tile so ``save_page`` can index coverage.
+
+    ``k`` is the representative slice (the one named in the tile label). ``slices`` lists every
+    slice index the tile is evidence for: a slab MIP shows all slices inside the slab, so each
+    of them is covered by the ``*:mip`` pass; a native tile covers only itself.
+    """
+    ks = [k] if slices is None else list(slices)
+    if k not in ks:
+        ks.insert(0, k)
+    im.info["review_sources"] = [{"study_uid": v.study_uid, "series_uid": v.series_uid,
+                                  "sop_uid": v.sop_uid(kk), "instance": v.instance(kk), "purpose": purpose} for kk in ks]
+    im.info["review_source"] = im.info["review_sources"][0]
     return im
+
+
+def _tile_sources(im: Image.Image) -> List[Dict[str, Any]]:
+    if "review_sources" in im.info:
+        return list(im.info["review_sources"])
+    return [im.info["review_source"]] if "review_source" in im.info else []
 
 
 def save_page(tiles: Sequence[Image.Image], cols: int, path: Path | str) -> Path:
@@ -603,7 +669,6 @@ def save_page(tiles: Sequence[Image.Image], cols: int, path: Path | str) -> Path
     sheet.save(path)
     index_path = path.parent / "render_index.json"
     index = json.loads(index_path.read_text()) if index_path.exists() else {}
-    index[path.name] = {"sources": [t.info["review_source"] for t in tiles if "review_source" in t.info],
-                        "sha256": sha256_file(path)}
+    index[path.name] = {"sources": [src for t in tiles for src in _tile_sources(t)], "sha256": sha256_file(path)}
     save_json(index, index_path)
     return path

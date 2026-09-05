@@ -15,6 +15,21 @@ Case-specific observations, source-report comparisons and images belong in the r
 - An 8–10 mm slab MIP raises nodule detection but hides ground-glass and merges adjacent vessels;
   always confirm on the native slice and never measure on the MIP.
 
+- Slab-MIP tiles are evidence for every slice inside the slab; MPR sheets carry the study/series of the
+  volume they were built from. Before v0.4.1 the index recorded only the slab centre and nothing for MPRs,
+  so a `lung:mip` pass could never validate and MPR pages were rejected by `check`. Provenance is now
+  written by the renderer; never patch a session by hand to get past this.
+- Lung-window and MIP passes over neck and abdomen slices cost a fifth of the lung pages and show no lung;
+  `--auto-z lung` bounds the pass to the longest run of slices with enclosed air (padded 8 mm) and records
+  the skipped SOPs as `pass_scope` so the ledger stays honest. Bowel gas forms short runs and is ignored.
+- A 1 mm soft-tissue series read at 3x3 is noise-limited for nodes, adrenals and renal lesions; a 3–5 mm
+  reconstruction read the same anatomy in a fifth of the pages with more information. Use the thin
+  series for lungs, zoom and calipers; use the thick series for soft tissue, bone and HU sampling.
+- Vision clients truncate large image batches silently ("media removed: request limit" after ~35 sheets).
+  Open ≤ 20 sheets per request and re-open anything that was dropped before marking it reviewed.
+- The right cardiophrenic angle shows the liver dome as a round "nodule" on 3–6 consecutive axial lung
+  tiles; a single coronal zoom shows the smooth diaphragm contour. Check before measuring.
+
 ## Geometry
 - Draw orientation from direction cosines. CT/PET reformat geometry supports canonical LPS axial
   stacks; reject unsupported geometry instead of inventing correct-looking R/L markers.
@@ -31,6 +46,9 @@ Case-specific observations, source-report comparisons and images belong in the r
 ## Measurement
 - Region growing can leak into vessels/chest wall or be truncated by its box. Check boundaries and regard
   threshold-derived volumes/axes as exploratory. PixelSpacing calibrates distance, not lesion recognition.
+- Region growing at `--thr -300` leaks from a pleural-based mass into the chest wall (bbox touches the
+  `--box` edge, long axis +30 %) and from a calcified granuloma into the adjacent vessel (11 mm → 19 mm).
+  Confine with `--box`, report caliper axes for the mass, and grow calcified lesions at `--thr 150`.
 - Distances are between pixel centres; add one pixel when an edge-to-edge caliper reading is needed
   (`--auto` already does this for Feret axes).
 - Tool decimals do not prove accuracy; inter-reader variability of caliper measurements is about ±1.5 mm

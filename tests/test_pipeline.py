@@ -673,6 +673,50 @@ class CliTests(TempCase):
         rc, out, err = quiet(cli_main, ["inventory", str(p), "--output", str(self.root / "inv2"), "--json", "--no-redact"])
         self.assertEqual(json.loads(out)["study"]["AccessionNumber"], "ACC999")
 
+    def test_lung_bounds_and_mpr_positions_follow_the_body(self):
+        # 40 slices: 0-11 solid "neck", 12-27 hold enclosed air (lung), 28-39 solid "abdomen"
+        def lungs(ds):
+            k = int(ds.InstanceNumber) - 1
+            arr = np.full((32, 32), 20, dtype=np.int16)          # body ~ -960 HU after rescale? no: value 20 -> 2*20-1000 = -960
+            arr[:, :] = 520                                       # 2*520-1000 = +40 HU soft tissue
+            arr[:4, :] = 0                                        # air above the body (rows 0-3): -1000 HU
+            arr[:, :4] = 0                                        # air left of the body
+            if 12 <= k <= 27:
+                arr[10:22, 8:14] = 100                            # enclosed air: 2*100-1000 = -800 HU -> lung
+            ds.PixelData = arr.tobytes()
+        p = make_study(self.root, "a", gaps=tuple(range(40)), extra=lungs)
+        v = Volume(series_by_number(p, "1"))
+        lo, hi = v.lung_z_bounds(margin_mm=1.0)
+        self.assertEqual((lo, hi), (11.0, 28.0))                   # run 12..27 padded by one slice each side
+        rows = v.mpr_positions("coronal", 3)
+        cols = v.mpr_positions("sagittal", 3)
+        r0, r1, c0, c1 = v.body_bbox()
+        self.assertTrue(all(r0 <= r < r1 for r in rows) and all(c0 <= c < c1 for c in cols))
+        # --auto-z writes the scope; register stores it on the series; check accepts the skipped slices
+        rc, out, err = quiet(cli_main, ["prepare", "a", "--repo", str(self.root)])
+        session = Path(out.strip().splitlines()[-1])
+        out_dir = session.parent / "lung"
+        rc, out, err = quiet(cli_main, ["ct-render", str(p), "--series", "1", "--output", str(out_dir), "--windows", "lung",
+                                        "--mip", "2", "--auto-z", "lung", "--grid", "3x3"])
+        self.assertEqual(rc, 0, err)
+        index = json.loads((out_dir / "render_index.json").read_text())
+        self.assertEqual(len(index["_scope"]["lung:native"]["skipped_sops"]), 8)   # default 8 mm pad -> z 4..35 kept, 0..3 and 36..39 skipped
+        rendered = {s["sop_uid"] for k, e in index.items() if k != "_scope" for s in e["sources"] if s["purpose"] == "lung:native"}
+        self.assertEqual(len(rendered), 32)
+        rc, out, err = quiet(cli_main, ["register", str(session), "--directory", str(out_dir)])
+        self.assertEqual(rc, 0, err)
+        s = json.loads(session.read_text())
+        se = s["studies"][0]["series"][0]
+        self.assertEqual(set(se["pass_scope"]), {"lung:native", "lung:mip"})
+        self.assertIn("aerated lung", se["pass_scope"]["lung:native"]["basis"])
+        se.update(disposition="read", geometry_checked=True, required_passes=["lung:native", "lung:mip"])
+        for page in s["pages"]:
+            page["reviewed"] = True
+        errors = validate(s, verify_files=False)
+        self.assertFalse([e for e in errors if "unread/unrendered" in e], errors)
+        se["pass_scope"]["lung:native"]["basis"] = ""
+        self.assertTrue(any("stated basis" in e for e in validate(s, verify_files=False)))
+
     def test_ct_render_grid_options(self):
         p = make_study(self.root, "a", gaps=tuple(range(10)))
         out_dir = self.root / "render"
@@ -686,7 +730,18 @@ class CliTests(TempCase):
         first = Image.open(out_dir / sorted(native_pages)[0])
         self.assertEqual(first.size, (3 * 34, 3 * 34))
         purposes = {src["purpose"] for entry in index.values() for src in entry["sources"]}
-        self.assertEqual(purposes, {"lung:native", "lung:mip"})
+        self.assertEqual(purposes, {"lung:native", "lung:mip", "lung:mpr"})
+        # A slab MIP tile is evidence for every slice inside the slab, not only its centre: the
+        # ``lung:mip`` pass must therefore cover all ten SOPs (2 mm slab on 1 mm spacing = 3 slices).
+        native_sops = {s["sop_uid"] for e in index.values() for s in e["sources"] if s["purpose"] == "lung:native"}
+        mip_sops = {s["sop_uid"] for e in index.values() for s in e["sources"] if s["purpose"] == "lung:mip"}
+        self.assertEqual(len(native_sops), 10)
+        self.assertEqual(mip_sops, native_sops)
+        # Reformat sheets carry provenance (study/series) so ``register`` can attach them to the session.
+        mpr_pages = {k: v for k, v in index.items() if "coronal" in k or "sagittal" in k}
+        self.assertEqual(len(mpr_pages), 2)
+        for entry in mpr_pages.values():
+            self.assertTrue(entry["sources"] and all(s["purpose"] == "lung:mpr" and s["study_uid"] and s["series_uid"] for s in entry["sources"]))
         rc, out, err = quiet(cli_main, ["ct-render", str(p), "--series", "1", "--output", str(self.root / "r2"), "--windows", "lung",
                                         "--mip", "0", "--grid", "9x9", "--max-side", "200"])
         self.assertEqual(rc, 0)

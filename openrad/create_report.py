@@ -208,6 +208,15 @@ def register(path: Path, directory: Path) -> int:
     if directory != work and work not in directory.parents:
         raise InputError("Render into this run's work directory")
     old = {p["path"]: p for p in session["pages"]}
+    for index_path in sorted(directory.rglob("render_index.json")):
+        scope = json.loads(index_path.read_text()).get("_scope", {})
+        for purpose, sc in scope.items():
+            for study in session["studies"]:
+                if study["uid"] != sc.get("study_uid"):
+                    continue
+                for se in study["series"]:
+                    if se["uid"] == sc.get("series_uid"):
+                        se.setdefault("pass_scope", {})[purpose] = {k: sc[k] for k in ("zmin", "zmax", "basis", "skipped_sops") if k in sc}
     for p in sorted(directory.rglob("*.png")):
         name = str(p.resolve())
         h = digest(p)
@@ -286,7 +295,12 @@ def validate(s: Dict[str, Any], verify_files: bool = True) -> List[str]:
                     covered = {src["sop_uid"] for p in s["pages"] if p.get("reviewed") is True
                                for src in p.get("sources", [])
                                if src.get("study_uid") == study["uid"] and src.get("series_uid") == se["uid"] and src.get("purpose") == purpose}
-                    missing = set(se["sops"]) - covered
+                    scope = se.get("pass_scope", {}).get(purpose)
+                    skipped: set = set()
+                    if scope is not None:
+                        need(bool(scope.get("basis")), f"Series {se['number']} {purpose}: pass scope needs a stated basis")
+                        skipped = set(scope.get("skipped_sops", [])) & set(se["sops"])
+                    missing = set(se["sops"]) - covered - skipped
                     need(not missing, f"Series {se['number']} {purpose}: {len(missing)} unread/unrendered slices")
             else:
                 need(bool(se.get("reason")), f"Series {se['number']}: excluded/unsupported series needs reason")
@@ -400,6 +414,12 @@ def render_documents(s: Dict[str, Any], lang: str, report_name: str, guide_name:
         for name, region in study["regions"].items():
             if name.split(":")[-1].startswith("technique"):
                 lines.append(f"- {date_text(study['date'], lang)}: {region['text']}")
+    for study in s["studies"]:
+        for se in study["series"]:
+            for purpose, sc in (se.get("pass_scope") or {}).items():
+                if se.get("disposition") == "read" and purpose in se.get("required_passes", []):
+                    lines.append("- " + t["pass_scope_line"].format(series=f"S{se['number']}", purpose=purpose, zmin=f"{sc.get('zmin', float('nan')):.0f}",
+                                                                    zmax=f"{sc.get('zmax', float('nan')):.0f}", n=len(sc.get("skipped_sops", [])), basis=sc["basis"]))
     lines.append("")
     lines.append(s["comparison"]["reason"] if s["mode"] == "comparison" else t["no_prior"])
     lines.extend(["", f"## {t['h_findings']}", ""])
