@@ -49,6 +49,18 @@ The engine is bundled as a PyInstaller one-dir tree under `Resources`, not as a
 one-file binary: one-file re-extracts about eighty megabytes on every launch,
 which shows up as several seconds of dead time before the first window.
 
+`npm run bundle` does all of that in one command.
+
+On macOS, set `CI=true` when building the disk image. The dmg bundler otherwise
+runs an AppleScript that drives Finder to style the image window, which hangs
+wherever Finder is not interactive. The resulting image is the same apart from
+icon placement. `--bundles app` skips the image entirely and produces just the
+`.app`, which is what you want while iterating.
+
+Neither the application nor the engine is code-signed by this build. On another
+Mac, Gatekeeper will refuse an unsigned bundle until it is signed and notarised
+with a Developer ID.
+
 ---
 
 ## Architecture

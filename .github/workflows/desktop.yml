@@ -106,6 +106,12 @@ jobs:
 
       - name: Bundle the application
         working-directory: app
+        # CI=true makes the macOS dmg bundler skip the AppleScript that styles
+        # the disk-image window. That step drives Finder and hangs wherever
+        # Finder is not interactive, which is every runner and every automated
+        # build; the resulting image is identical apart from icon placement.
+        env:
+          CI: "true"
         run: npx tauri build --target ${{ matrix.target }}
 
       - uses: actions/upload-artifact@v4
