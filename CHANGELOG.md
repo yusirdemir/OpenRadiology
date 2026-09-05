@@ -4,6 +4,28 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [0.4.0] - 2026-09-05
+
+### Added
+- `openrad mcp`: dependency-free Model Context Protocol server (JSON-RPC 2.0 over stdio, protocol
+  2025-06-18 with 2025-03-26 / 2024-11-05 accepted) exposing 21 tools, `openrad://` resources
+  (checklists, references, skill, templates, schema, config, sessions, pages as PNG blobs, evidence)
+  and four prompts (`review_study`, `compare_studies`, `explain_for_patient`, `blinded_audit`).
+- Protocol-level review discipline: `page_view` is the only way to mark a page reviewed and returns
+  the image in the same step; region/claim setters return object-scoped validation errors;
+  `session_status` reports technical alerts (tilt, unsupported series, SUV warnings, unrendered or
+  unviewed slices, pending comparison) and coverage per required pass; `session_plan` returns the
+  reading plan as data.
+- `measure` over MCP writes write-once evidence into the session and returns the SHA-256 with a
+  ready `measurement_template`; renders return inline PNGs within a byte budget plus resource links;
+  engine progress is forwarded as MCP logging notifications.
+- `openrad mcp --install claude-desktop|cursor|windsurf [--write]`, `--print --client claude-code|generic`,
+  `--list-tools`; client entries use the absolute interpreter so GUI clients need no PATH.
+- `docs/mcp.md`; `tests/test_mcp.py` (10 synthetic end-to-end tests driving the wire with dicts).
+
+### Changed
+- `openrad finish` now records finalization time, document paths and hashes in `session.json`.
+
 ## [0.3.0] - 2026-09-05
 
 ### Added

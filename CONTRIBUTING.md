@@ -50,6 +50,15 @@ ruff check openrad tests
 3. Add a synthetic test that proves the validator refuses an unsupported claim.
 4. Update `docs/references.md`, `skills/openrad/SKILL.md` and the README table.
 
+## Adding an MCP tool
+
+1. Implement the behaviour as an `openrad` command first; the MCP tool must only build an argv and
+   parse `--json` output (`openrad/mcp/tools.py`). No algorithm lives in the MCP layer.
+2. Give the tool a JSON schema, annotations (`readOnlyHint` etc.) and a one-paragraph description that
+   tells a model *when* to call it.
+3. Never add a second way to mark a page reviewed; `page_view` is the only one by design.
+4. Add an end-to-end test in `tests/test_mcp.py` that drives the wire with dicts.
+
 ## Adding a setting
 
 1. Add one `Setting(...)` entry in `openrad/config.py` with section, default, coercer and help.

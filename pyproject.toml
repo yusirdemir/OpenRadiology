@@ -4,13 +4,13 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "openradiology"
-version = "0.3.0"
+version = "0.4.0"
 description = "Deterministic DICOM workbench for traceable AI radiology review (CT, PET/CT, brain MRI): zero-GPU rendering, calibrated HU/SUV measurement, SHA-256 evidence ledger."
 readme = "README.md"
 authors = [{ name = "Yusir Demir" }]
 license = { text = "MIT" }
 keywords = [
-    "radiology", "dicom", "medical-imaging", "ai-agent", "llm", "ct", "mri", "pet-ct",
+    "radiology", "dicom", "medical-imaging", "ai-agent", "llm", "mcp", "model-context-protocol", "ct", "mri", "pet-ct",
     "suv", "hounsfield", "recist", "fleischner", "structured-reporting", "claude", "codex", "cursor",
 ]
 classifiers = [
@@ -53,7 +53,7 @@ Issues = "https://github.com/yusirdemir/OpenRadiology/issues"
 Changelog = "https://github.com/yusirdemir/OpenRadiology/blob/main/CHANGELOG.md"
 
 [tool.setuptools]
-packages = ["openrad", "openrad.locales"]
+packages = ["openrad", "openrad.locales", "openrad.mcp"]
 
 [tool.setuptools.package-data]
 openrad = ["py.typed", "schema/*.json", "locales/*.json"]

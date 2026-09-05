@@ -42,6 +42,12 @@ stated. Silence is never an option; an unexplained region blocks `finish`.
   or `general.lang` in `.openrad.toml` selects any locale shipped in `openrad/locales/` (file suffixes,
   section titles and region names come from that locale file).
 
+## Two ways to drive the engine
+- **Shell** (Claude Code, Codex, Cursor agent mode): the `openrad` commands below.
+- **MCP** (Claude Desktop, Cursor, Windsurf, any MCP client): `openrad mcp --install <client> --write`; the
+  tools mirror the commands one to one (`render_ct`, `measure`, `page_view`, `session_*`). Over MCP the
+  only way to mark a page reviewed is `page_view`, which hands you the image. See `docs/mcp.md`.
+
 ## Before the first command: environment and configuration
 
 ```bash

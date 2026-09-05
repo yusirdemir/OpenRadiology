@@ -25,6 +25,6 @@ jobs:
       - name: Test (synthetic phantoms only; no patient data in CI)
         run: pytest
       - name: Test without installation (direct path run)
-        run: python tests/test_pipeline.py
+        run: python tests/test_pipeline.py && python tests/test_mcp.py
       - name: CLI smoke
-        run: openrad --version && openrad doctor && openrad config --json > /dev/null
+        run: openrad --version && openrad doctor && openrad config --json > /dev/null && openrad mcp --list-tools

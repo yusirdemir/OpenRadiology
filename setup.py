@@ -12,7 +12,7 @@ version = re.search(r'__version__ = "([^"]+)"', (Path(__file__).parent / "openra
 setup(
     name="openradiology",
     version=version,
-    packages=["openrad", "openrad.locales"],
+    packages=["openrad", "openrad.locales", "openrad.mcp"],
     package_data={"openrad": ["py.typed", "schema/*.json", "locales/*.json"]},
     python_requires=">=3.9",
     install_requires=["pydicom>=2.4.0", "numpy>=1.22.0", "Pillow>=9.0.0", "tomli>=2.0; python_version < '3.11'"],

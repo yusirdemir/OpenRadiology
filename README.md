@@ -9,7 +9,8 @@
   <img alt="Zero GPU" src="https://img.shields.io/badge/Compute-Zero--GPU-success.svg">
   <img alt="Evidence" src="https://img.shields.io/badge/Evidence-SHA--256%20ledger-orange.svg">
   <img alt="Privacy" src="https://img.shields.io/badge/De--identification-DICOM%20PS3.15-critical.svg">
-  <img alt="Agents" src="https://img.shields.io/badge/Agents-Claude%20Code%20%7C%20Codex%20%7C%20Cursor%20%7C%20Antigravity-8A2BE2.svg">
+  <img alt="MCP" src="https://img.shields.io/badge/MCP-2025--06--18%20server-0A7EA4.svg">
+  <img alt="Agents" src="https://img.shields.io/badge/Agents-Claude%20Desktop%20%7C%20Claude%20Code%20%7C%20Codex%20%7C%20Cursor%20%7C%20Windsurf-8A2BE2.svg">
 </p>
 
 ---
@@ -40,8 +41,9 @@ OpenRadiology is the missing physical layer. It is a small, pure-Python engine
    RadLex terms) and a plain-language patient companion guide. English by default; any other language
    with one setting, new languages by adding one locale file.
 
-The agent layer (`skills/openrad/SKILL.md`) turns this into a reproducible reading protocol for
-Claude Code, OpenAI Codex, Cursor, Google Antigravity or any tool-using model.
+The agent layer turns this into a reproducible reading protocol: a skill file for coding agents
+(`skills/openrad/SKILL.md`) and a dependency-free **Model Context Protocol server** (`openrad mcp`)
+for Claude Desktop, Cursor, Windsurf, Claude Code and any other MCP client.
 
 > OpenRadiology does not detect, segment or diagnose. It makes it impossible to *claim* without
 > *looking*, and it makes every claim reproducible.
@@ -263,7 +265,33 @@ Profile with the options a quantitative review needs:
 
 ---
 
-## Agent integration
+## MCP server (Claude Desktop, Cursor, Windsurf, Claude Code)
+
+```bash
+openrad mcp --install claude-desktop --write --repo ~/radiology-workspace   # then restart the client
+openrad mcp --print --client cursor                                         # or print the snippet
+```
+
+The server exposes 21 tools, a clinical resource set and four prompts over stdio without any
+third-party dependency. What makes it more than a wrapper:
+
+* **`page_view` is the only way to mark a page reviewed.** It returns the sheet as an image block and
+  flips the flag in the same step, after checking the file hash. The model cannot claim coverage for
+  a page it never received; `session_check` refuses to finish otherwise.
+* **Object-scoped feedback.** Writing a region or a claim returns just the unmet requirements for that
+  object, while the image is still in context.
+* **Technical alerts, never diagnoses.** `session_status` flags tilt, unsupported series, SUV warnings,
+  unrendered or unviewed slices and pending comparison verdicts.
+* **Hashed evidence.** `measure` writes a write-once JSON evidence file inside the session and returns
+  its SHA-256 plus a ready `measurement_template` for the claim.
+* **Vision-budget images.** Renders come back as a few inline PNGs plus `resource_link`s; nothing is
+  down-sampled; engine progress streams as MCP logging notifications.
+* **Same code as the CLI.** Every tool builds an `openrad` argv and runs it in-process with stdout
+  captured, so the model and the shell always see identical results.
+
+Full guide: [`docs/mcp.md`](docs/mcp.md).
+
+## Agent integration (skill file)
 
 The skill is defined once in [`skills/openrad/SKILL.md`](skills/openrad/SKILL.md) and linked into the
 locations each agent expects:
@@ -274,6 +302,7 @@ locations each agent expects:
 | OpenAI Codex | `.codex/skills/openrad` (+ `agents/openai.yaml`) | `$openrad <study_folder>` |
 | Google Antigravity | `.agents/skills/openrad` | `/openrad <study_folder>` |
 | Cursor | `.cursor/rules/openrad.mdc` | rule attaches when DICOM/session/config files are in context |
+| Claude Desktop, Windsurf, other MCP clients | `openrad mcp --install <client> --write` | tools, resources and prompts over MCP (see above) |
 | Any other agent | give it `SKILL.md` and shell access | follow the seven steps |
 
 What the skill enforces:
@@ -316,10 +345,12 @@ run cache so that nothing but the two documents reaches the archive.
 openrad/            engine and CLI: dcmlib, grid, suv, measure, renderers, anonymize, config, create_report, errors
 openrad/schema/     JSON Schema of the session ledger
 openrad/locales/    report strings per language (en.json, tr.json, ...)
+openrad/mcp/        Model Context Protocol server: protocol core, tools, resources, prompts, client installer
 skills/openrad/     agent skill (SKILL.md) + OpenAI agent manifest
 checklists/         modality checklists, lessons learned, blinded-audit rubric
 templates/<lang>/   report + evidence specification and patient-guide language rules per locale
 docs/references.md  guidelines and papers with DOIs, mapped to code
+docs/mcp.md         MCP server guide
 tests/              synthetic-phantom engineering tests (no patient data)
 ```
 
@@ -328,12 +359,14 @@ tests/              synthetic-phantom engineering tests (no patient data)
 ## Testing and privacy
 
 ```bash
-pytest                          # or: python3 tests/test_pipeline.py  (no PYTHONPATH needed)
+pytest                          # or: python3 tests/test_pipeline.py && python3 tests/test_mcp.py
 ruff check .
 ```
 
-Forty-two synthetic tests cover geometry and tilt, grid fitting, configuration precedence, SUV decay
-paths, measurement conventions, de-identification, hashing, validation and exit codes. Tests use
+Fifty-four synthetic tests cover geometry and tilt, grid fitting, configuration precedence, SUV decay
+paths, measurement conventions, de-identification, hashing, validation, exit codes and the MCP layer
+(handshake, tool catalogue, a complete review session over JSON-RPC, resources, prompts, stdio
+transport, client installers). Tests use
 phantoms generated in code. The repository must never contain DICOM files, rendered sheets, session JSON
 or reports derived from real examinations, even anonymized ones; `.gitignore` excludes `DCIM/`,
 `reports/` and `.cache/` by default. See [CONTRIBUTING.md](CONTRIBUTING.md).

@@ -14,6 +14,7 @@
     openrad anonymize  IN_DIR OUT_DIR --salt SECRET
     openrad config     [--json | --init [.openrad.toml]]
     openrad doctor     [--json]
+    openrad mcp        [--repo DIR] | --print | --install CLIENT [--write] | --list-tools
 
 Global options (before the command): ``--config FILE`` selects a TOML file
 (same as ``OPENRAD_CONFIG``). Settings precedence: flags > ``OPENRAD_*`` env >
@@ -54,6 +55,7 @@ COMMANDS: Dict[str, str] = {
     "anonymize": "De-identify a DICOM tree (PS3.15 basic profile, deterministic pseudonyms, shifted dates)",
     "config": "Show the effective configuration and its sources, or write a template .openrad.toml",
     "doctor": "Check interpreter, dependencies, decoders, configuration and writable paths",
+    "mcp": "Run the Model Context Protocol server (stdio) or configure Claude Desktop / Cursor / Windsurf",
 }
 ALIASES: Dict[str, str] = {"render": "ct-render", "render-ct": "ct-render", "render-mr": "mr-render", "render-pet": "pet-render"}
 
@@ -83,6 +85,8 @@ def _runner(command: str) -> Runner:
         from .config import main
     elif command == "doctor":
         from .doctor import main
+    elif command == "mcp":
+        from .mcp.cli import main
     else:  # pragma: no cover - guarded by the parser
         raise KeyError(command)
     return main

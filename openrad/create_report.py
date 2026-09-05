@@ -22,7 +22,7 @@ import math
 import sys
 import tempfile
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence
 
 from .config import Settings, load_settings
 from .dcmlib import group_series, read_headers, sha256_file
@@ -516,6 +516,7 @@ def finish(path: Path, lang: Optional[str] = None, output_dir: Optional[Path] = 
     s["report_sha256"] = hashlib.sha256(body.encode()).hexdigest()
     s["guide_sha256"] = hashlib.sha256(plain.encode()).hexdigest()
     s["report_file"], s["guide_file"] = str(report), str(guide)
+    write_json(path, s)  # the session itself records finalization, files and document hashes
     for claim in s["claims"]:
         for m in claim.get("measurements", []):
             m["tool_output"] = Path(m["evidence_file"]).read_text(encoding="utf-8")
