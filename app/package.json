@@ -8,7 +8,9 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "test": "vitest run",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "engine": "python -m pip install -e '..[codecs]' pyinstaller && pyinstaller --noconfirm --clean ../packaging/openrad-server.spec --distpath ../packaging/dist --workpath ../packaging/build && rm -rf src-tauri/resources/engine && mkdir -p src-tauri/resources && cp -R ../packaging/dist/openrad-server src-tauri/resources/engine",
+    "bundle": "npm run engine && npm run tauri build"
   },
   "dependencies": {
     "@fontsource-variable/ibm-plex-sans": "^5.3.0",

@@ -11,6 +11,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, fetchText } from "../api/client";
 import type { LocaleBundle } from "../api/types";
+import { GROUP_LABEL, groupBlockers, translateBlockers } from "../lib/blockers";
 import { useSession } from "../state/session";
 import { Markdown } from "./Markdown";
 import { Spinner } from "./primitives";
@@ -95,17 +96,30 @@ export function ReportScreen({ locale, onBack }: Props) {
             </p>
           )}
           {blocking.length > 0 && (
-            <ol className="space-y-1.5">
-              {blocking.map((item, i) => (
-                <li
-                  key={i}
-                  className="rounded-[2px] border border-alarm-400/25 bg-alarm-900/30 p-2 text-[11px] leading-relaxed text-chalk-300"
-                >
-                  <span className="readout mr-1.5 text-alarm-400">{String(i + 1).padStart(2, "0")}</span>
-                  {item}
-                </li>
+            <div className="space-y-3">
+              {groupBlockers(translateBlockers(blocking)).map((group) => (
+                <section key={String(group.where)}>
+                  <h3 className="rail-label mb-1 flex items-baseline gap-1.5">
+                    {GROUP_LABEL[String(group.where)]}
+                    <span className="text-chalk-600">{group.items.length}</span>
+                  </h3>
+                  <ol className="space-y-1">
+                    {group.items.map((blocker, i) => (
+                      <li
+                        key={i}
+                        // The engine's own wording is kept as the title: the
+                        // translation is for reading, the original is what a
+                        // terminal or an MCP client would show.
+                        title={blocker.translated ? blocker.raw : undefined}
+                        className="rounded-[2px] border border-alarm-400/25 bg-alarm-900/30 px-2 py-1.5 text-[11px] leading-relaxed text-chalk-300"
+                      >
+                        {blocker.text}
+                      </li>
+                    ))}
+                  </ol>
+                </section>
               ))}
-            </ol>
+            </div>
           )}
           {error && <p className="mt-2 text-[11px] text-alarm-400">{error}</p>}
 
