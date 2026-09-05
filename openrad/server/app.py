@@ -42,13 +42,25 @@ def create_app(budget_bytes: Optional[int] = None, policy: Optional[DwellPolicy]
     return state, server
 
 
-def _watch_parent(pid: int, stop: threading.Event) -> None:
-    """Exit when the shell that started us goes away."""
+def _watch_parent(pid: int, stop: threading.Event, publish_handshake: bool) -> None:
+    """Exit when the shell that started us goes away.
+
+    This is a hard exit rather than a graceful shutdown: the window is already
+    gone, and a sidecar holding several hundred megabytes of decoded volume
+    should not linger while threads unwind. The handshake is withdrawn first,
+    because a file left behind advertises a port that is about to close and
+    would send the next MCP bridge to a dead socket.
+    """
     while not stop.wait(1.5):
         try:
             os.kill(pid, 0)
         except OSError:
             log.warning("parent process %s exited; shutting the sidecar down", pid)
+            if publish_handshake:
+                try:
+                    handshake.clear()
+                except OSError:  # pragma: no cover - unwritable state directory
+                    pass
             os._exit(0)
 
 
@@ -71,7 +83,8 @@ def serve(host: str = "127.0.0.1", port: int = 0, token: Optional[str] = None,
 
     stop = threading.Event()
     if parent_pid:
-        threading.Thread(target=_watch_parent, args=(parent_pid, stop), name="parent-watch", daemon=True).start()
+        threading.Thread(target=_watch_parent, args=(parent_pid, stop, publish_handshake),
+                         name="parent-watch", daemon=True).start()
 
     def shutdown(signum: int, _frame: Any) -> None:
         log.info("signal %s received; stopping", signum)

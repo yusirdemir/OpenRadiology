@@ -4,6 +4,40 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+- **Desktop application** (`app/`): a Tauri v2 window for macOS and Windows with a WebGL2 slice
+  viewer, the anatomical sweep as a working checklist, measurement tools wired to the engine, a
+  comparison mode and a report screen. Turkish and English, with region names read from the engine's
+  own locale files so the screen and the report cannot drift apart.
+- **`openrad.server`**: a loopback sidecar that keeps decoded volumes resident under an LRU byte
+  budget, streams raw calibrated pixels for GPU windowing, runs engine commands as cancellable child
+  processes with server-sent progress, and serves the session ledger. Bearer token on an
+  OS-assigned port, no outbound connection, file access confined to the folders opened in the
+  session.
+- **View attestation**: `SKILL.md` concedes that a page can be marked `reviewed` without being
+  opened and that `openrad check` cannot detect it. The window draws the pixels, so it can. A slice
+  counts as seen only after an uninterrupted dwell (400 ms), at full resolution (at least one screen
+  pixel per image pixel), in a focused window. Attestations are appended to `attestations.jsonl`
+  beside the session; `session.schema.json` stays at version 2 and `openrad check` is unchanged, so
+  a session can be worked on from the terminal and the window interchangeably.
+- **MCP bridge** (`openrad-server --bridge`): a stdio shim that proxies an MCP client into the
+  running window, sharing its volume cache and open session, and falls back to the in-process server
+  when no window is running. Through the bridge, `page_view` passes the display gate: the sheet is
+  shown at natural resolution and the tool runs only once an attestation covers it.
+- **Same-patient gate in the interface**: when exports carry different patient identifiers, the
+  sidecar finds the documents in the archive that already name every selected study so the reader
+  makes a recorded assertion instead of reading a raw error.
+- `packaging/openrad-server.spec`: PyInstaller specification producing one binary that is also the
+  CLI (`--cli`) and the bridge (`--bridge`), with the compressed-DICOM decoders bundled.
+
+### Changed
+- `measure.run` accepts an optional pre-decoded `Volume`, so a long-lived caller can measure without
+  re-reading several hundred files per click. The mathematics is untouched.
+- `ruff` ignores `UP045` alongside `UP006` and `UP007`: the same Python 3.9 compatibility rule, split
+  out by newer ruff versions.
+
 ## [0.4.0] - 2026-09-05
 
 ### Added

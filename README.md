@@ -48,6 +48,24 @@ for Claude Desktop, Cursor, Windsurf, Claude Code and any other MCP client.
 > OpenRadiology does not detect, segment or diagnose. It makes it impossible to *claim* without
 > *looking*, and it makes every claim reproducible.
 
+### Desktop application
+
+`app/` is a Tauri v2 window for macOS and Windows that puts a GPU viewer in front of the same engine
+(see **[docs/desktop.md](docs/desktop.md)**). Volumes are decoded once and stay resident, window and
+level run as shader uniforms, and every clinical number still comes back from `openrad measure` with
+the SHA-256 of its evidence file.
+
+It also closes the one hole the command line admits to. `SKILL.md` concedes that a page can be marked
+`reviewed` without being opened and that `openrad check` cannot tell. A window draws the pixels, so it
+can: a slice counts as seen only after an uninterrupted dwell, at full resolution, in a focused
+window, and the server refuses any `reviewed` flag no attestation covers. Attestations live beside the
+session in `attestations.jsonl`, so the schema is untouched and terminal and desktop can share a
+session.
+
+An MCP client drives the open window through `openrad-server --bridge` rather than a separate process,
+which puts the same gate in front of the agent's `page_view`. No API key, no model weights, nothing
+leaves the machine.
+
 ---
 
 ## Architecture

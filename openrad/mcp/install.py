@@ -15,13 +15,29 @@ SERVER_KEY = "openradiology"
 CLIENTS = ("claude-desktop", "cursor", "windsurf", "claude-code", "generic")
 
 
-def server_entry(repo: Path, use_entrypoint: bool = False, lang: Optional[str] = None, extra_env: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
-    """The mcpServers entry. Absolute interpreter path by default: GUI clients rarely inherit the shell PATH."""
+def server_entry(repo: Path, use_entrypoint: bool = False, lang: Optional[str] = None,
+                 extra_env: Optional[Dict[str, str]] = None, bridge: bool = False) -> Dict[str, Any]:
+    """The mcpServers entry. Absolute interpreter path by default: GUI clients rarely inherit the shell PATH.
+
+    With ``bridge``, the client is pointed at the desktop bridge instead of a
+    standalone server. The bridge proxies into a running OpenRadiology window
+    when there is one -- sharing its session and putting ``page_view`` behind
+    the display gate -- and falls back to this same in-process server when
+    there is not, so the entry works either way.
+    """
+    if bridge:
+        command, args = (sys.executable, ["--bridge"]) if getattr(sys, "frozen", False) \
+            else (sys.executable, ["-m", "openrad.server", "--bridge"])
+        env: Dict[str, str] = {"OPENRAD_DOCS_ROOT": str(repo)}
+        if lang:
+            env["OPENRAD_LANG"] = lang
+        env.update(extra_env or {})
+        return {"command": command, "args": args, "env": env}
     if use_entrypoint:
         command, args = "openrad", ["mcp"]
     else:
         command, args = sys.executable, ["-m", "openrad", "mcp"]
-    env: Dict[str, str] = {"OPENRAD_DOCS_ROOT": str(repo)}
+    env = {"OPENRAD_DOCS_ROOT": str(repo)}
     if lang:
         env["OPENRAD_LANG"] = lang
     env.update(extra_env or {})

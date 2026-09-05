@@ -422,3 +422,48 @@ class BridgeCase(unittest.TestCase):
                 self.assertEqual(bridge.main(["--no-fallback"]), 3)
             finally:
                 os.environ.pop("OPENRAD_STATE_DIR", None)
+
+
+class HandshakeCase(unittest.TestCase):
+    """Discovery for the MCP bridge, including the failure modes that matter."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="openrad-handshake-")
+        os.environ["OPENRAD_STATE_DIR"] = self.tmp
+
+    def tearDown(self):
+        os.environ.pop("OPENRAD_STATE_DIR", None)
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_it_is_written_owner_only(self):
+        from openrad.server import handshake
+
+        path = handshake.write(51234, "a-token")
+        self.assertEqual(oct(path.stat().st_mode & 0o777), "0o600")
+        payload = handshake.read()
+        self.assertEqual(payload["port"], 51234)
+        self.assertEqual(payload["token"], "a-token")
+
+    def test_a_stale_file_is_ignored_rather_than_trusted(self):
+        from openrad.server import handshake
+
+        handshake.write(51234, "a-token")
+        stale = json.loads(handshake.handshake_path().read_text())
+        stale["pid"] = 2_147_483_646  # a pid that is not running
+        handshake.handshake_path().write_text(json.dumps(stale))
+        self.assertIsNone(handshake.read())
+
+    def test_a_malformed_file_is_ignored(self):
+        from openrad.server import handshake
+
+        handshake.handshake_path().parent.mkdir(parents=True, exist_ok=True)
+        handshake.handshake_path().write_text("{not json")
+        self.assertIsNone(handshake.read())
+
+    def test_clearing_is_idempotent(self):
+        from openrad.server import handshake
+
+        handshake.write(51234, "a-token")
+        handshake.clear()
+        handshake.clear()
+        self.assertIsNone(handshake.read())

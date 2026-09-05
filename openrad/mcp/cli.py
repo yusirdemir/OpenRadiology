@@ -4,6 +4,7 @@
     openrad mcp --repo /path/to/workspace    # session cache and reports live here
     openrad mcp --print [--client cursor]    # show the client configuration snippet
     openrad mcp --install claude-desktop --write   # merge into the client's config file
+    openrad mcp --install claude-code --bridge     # drive the desktop window instead
     openrad mcp --list-tools [--json]        # catalogue for documentation or debugging
 """
 from __future__ import annotations
@@ -28,6 +29,10 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--config-path", type=Path, help="explicit client config file for --write")
     ap.add_argument("--entrypoint", action="store_true", help="use the 'openrad' executable instead of the absolute Python interpreter")
     ap.add_argument("--lang", help="OPENRAD_LANG to embed in the client entry")
+    ap.add_argument("--bridge", action="store_true",
+                    help="point the client at the desktop bridge: it proxies into a running "
+                         "OpenRadiology window (sharing its session and enforcing the display gate) "
+                         "and falls back to this server when no window is running")
     ap.add_argument("--list-tools", action="store_true", help="print the tool catalogue")
     ap.add_argument("--json", action="store_true")
     return ap
@@ -46,7 +51,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         return 0
     if a.print or a.install:
         client = a.install or a.client
-        for line in install(client, repo, a.write, a.config_path, use_entrypoint=a.entrypoint, lang=a.lang):
+        for line in install(client, repo, a.write, a.config_path, use_entrypoint=a.entrypoint,
+                            lang=a.lang, bridge=a.bridge):
             print(line)
         return 0
     return serve_stdio(repo)
