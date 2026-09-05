@@ -1,0 +1,42 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Distribution / packaging
+dist/
+build/
+*.egg-info/
+.eggs/
+
+# Environments
+.env
+.venv
+env/
+venv/
+ENV/
+
+# Reproducible review scratch artifacts / cache
+.cache/
+*.tmp
+
+# Operating System Files
+.DS_Store
+Thumbs.db
+
+# Test & coverage
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Patient archives and generated reports never belong in the repository
+DCIM/
+reports/
+.openrad.local.toml
+*.map.json
+*.dcm
+*.DCM
+*.lock.json

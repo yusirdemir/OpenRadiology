@@ -1,0 +1,78 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "openradiology"
+version = "0.3.0"
+description = "Deterministic DICOM workbench for traceable AI radiology review (CT, PET/CT, brain MRI): zero-GPU rendering, calibrated HU/SUV measurement, SHA-256 evidence ledger."
+readme = "README.md"
+authors = [{ name = "Yusir Demir" }]
+license = { text = "MIT" }
+keywords = [
+    "radiology", "dicom", "medical-imaging", "ai-agent", "llm", "ct", "mri", "pet-ct",
+    "suv", "hounsfield", "recist", "fleischner", "structured-reporting", "claude", "codex", "cursor",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Healthcare Industry",
+    "Intended Audience :: Science/Research",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Medical Science Apps.",
+    "Topic :: Scientific/Engineering :: Image Processing",
+    "Typing :: Typed",
+]
+requires-python = ">=3.9"
+dependencies = [
+    "pydicom>=2.4.0",
+    "numpy>=1.22.0",
+    "Pillow>=9.0.0",
+    "tomli>=2.0; python_version < '3.11'",
+]
+
+[project.optional-dependencies]
+# Compressed transfer syntaxes (JPEG 2000, JPEG-LS, RLE) need a decoder plugin.
+codecs = ["pylibjpeg>=2.0", "pylibjpeg-libjpeg>=2.0", "pylibjpeg-openjpeg>=2.0"]
+dev = ["pytest>=7.0.0", "ruff>=0.4.0", "mypy>=1.8"]
+
+[project.scripts]
+openrad = "openrad.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/yusirdemir/OpenRadiology"
+Repository = "https://github.com/yusirdemir/OpenRadiology.git"
+Issues = "https://github.com/yusirdemir/OpenRadiology/issues"
+Changelog = "https://github.com/yusirdemir/OpenRadiology/blob/main/CHANGELOG.md"
+
+[tool.setuptools]
+packages = ["openrad", "openrad.locales"]
+
+[tool.setuptools.package-data]
+openrad = ["py.typed", "schema/*.json", "locales/*.json"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-q"
+filterwarnings = ["ignore::UserWarning:pydicom"]
+
+[tool.ruff]
+line-length = 140
+target-version = "py39"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP"]
+ignore = ["E731", "UP006", "UP007", "UP035"]
+
+[tool.mypy]
+python_version = "3.9"
+ignore_missing_imports = true
+warn_unused_ignores = true
