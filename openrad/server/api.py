@@ -119,6 +119,13 @@ class AppState:
         self.volumes.clear()
 
 
+def default_workspace() -> Path:
+    """Where review sessions are written when the caller does not say."""
+    from .handshake import state_dir
+
+    return state_dir() / "workspace"
+
+
 def _default_budget() -> int:
     raw = os.environ.get("OPENRAD_VOLUME_BUDGET_MB")
     if raw:
@@ -182,6 +189,21 @@ def build_router(state: AppState) -> Router:
                               "policy": state.policy.as_dict(),
                               "regions": {mod: list(keys) for mod, keys in REGIONS.items()},
                               "windows": [{"name": n, "center": c, "width": w} for n, (c, w) in WINDOWS.items()]})
+
+    @route("GET", "/locale")
+    def locale(request: Request) -> Response:
+        """Region names and report headings, from the engine's own locale files.
+
+        The interface must not keep its own copy of these: a translation that
+        drifts from the report would label a region one way on screen and
+        another way in the document the patient reads.
+        """
+        from ..locales import DEFAULT_LANGUAGE, available_languages, load_locale
+
+        lang = request.q("lang") or state.settings.lang or DEFAULT_LANGUAGE
+        if lang not in available_languages():
+            lang = DEFAULT_LANGUAGE
+        return json_response({"language": lang, "available": list(available_languages()), "locale": load_locale(lang)})
 
     @route("GET", "/doctor")
     def doctor(_: Request) -> Response:
@@ -364,7 +386,11 @@ def build_router(state: AppState) -> Router:
     @route("POST", "/session/prepare")
     def session_prepare(request: Request) -> Response:
         payload = request.json()
-        repo = Path(str(payload.get("repo") or Path.cwd())).expanduser().resolve()
+        # Sessions live in the application's own directory, never inside the
+        # DICOM archive: a review must not write a cache into the folder that
+        # holds the source images.
+        repo = Path(str(payload.get("repo") or default_workspace())).expanduser().resolve()
+        repo.mkdir(parents=True, exist_ok=True)
         state.allow(repo)
         studies_root = payload.get("studies_root")
         if studies_root:

@@ -40,3 +40,10 @@ reports/
 *.dcm
 *.DCM
 *.lock.json
+
+# Desktop application
+app/node_modules/
+app/dist/
+app/src-tauri/target/
+app/src-tauri/binaries/
+.playwright-mcp/
