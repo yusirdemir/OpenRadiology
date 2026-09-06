@@ -1,22 +1,30 @@
 /**
- * Viewer state: which image, drawn how.
+ * Viewer state: which image, drawn how, and how two of them stay together.
  *
- * Window and level live here rather than in the renderer because several
- * panels read them -- the evidence panel records them with an attestation, the
- * comparison view mirrors them across two studies. The renderer stays a pure
- * function of this state.
+ * The interesting part is the lockstep. Two CT examinations of the same person
+ * almost never share a slice index or a table zero: the technologist may have
+ * started the scan ten centimetres higher, the reconstruction spacing may
+ * differ, the patient lay differently. Linking by slice index would put a
+ * lesion next to a rib. Linking by absolute z in patient coordinates is worse:
+ * the table origin is a property of the scanner that day, so the panes jump the
+ * moment the reader touches the wheel.
+ *
+ * So the panes are linked *relatively*. An anchor pair is set whenever the
+ * reader lands somewhere deliberate -- opening a study, jumping to a finding,
+ * switching the link on -- and from then on the other pane's index is
+ * recomputed from the anchor as a physical offset:
+ *
+ *     mm      = (index - anchor[a]) * spacing[a]
+ *     index_b = anchor[b] + round(mm / spacing[b])
+ *
+ * Recomputing from the anchor rather than accumulating steps means rounding
+ * never drifts, and a pane that hits the end of its stack simply clamps
+ * without dragging the other one with it.
  */
 import { create } from "zustand";
 import { api } from "../api/client";
-import type { PlaneName, Ref, SeriesCard, SeriesMeta, SliceImage } from "../api/types";
+import type { PlaneName, SeriesCard, SeriesMeta } from "../api/types";
 import { IDENTITY_VIEW, type ViewState } from "../gl/viewport";
-
-export type ToolName = "browse" | "window" | "distance" | "roi" | "seed" | "extent";
-
-export interface PendingPoint {
-  row: number;
-  col: number;
-}
 
 export interface WindowSetting {
   center: number;
@@ -25,13 +33,28 @@ export interface WindowSetting {
   name: string;
 }
 
-export const WINDOW_PRESETS: WindowSetting[] = [
+export const CT_WINDOWS: WindowSetting[] = [
   { name: "lung", center: -600, width: 1500, invert: false },
   { name: "soft", center: 40, width: 400, invert: false },
   { name: "bone", center: 450, width: 1800, invert: false },
   { name: "liver", center: 60, width: 160, invert: false },
   { name: "brain", center: 40, width: 80, invert: false },
 ];
+
+export const WINDOW_LABELS: Record<string, string> = {
+  lung: "Akciğer",
+  soft: "Yumuşak doku",
+  mediastinum: "Mediasten",
+  bone: "Kemik",
+  liver: "Karaciğer",
+  abdomen: "Batın",
+  angio: "Damar",
+  brain: "Beyin",
+  stroke: "İnme",
+  subdural: "Subdural",
+  auto: "Otomatik",
+  custom: "Elle",
+};
 
 export interface ViewerPane {
   studyPath: string;
@@ -41,9 +64,9 @@ export interface ViewerPane {
   plane: PlaneName;
   index: number;
   mipMm: number;
+  focus?: [number, number, number];
   window: WindowSetting;
   view: ViewState;
-  image: SliceImage | null;
   loading: boolean;
   error: string | null;
 }
@@ -51,46 +74,80 @@ export interface ViewerPane {
 interface ViewerState {
   panes: ViewerPane[];
   activePane: number;
-  tool: ToolName;
-  /** Points collected for the tool in progress, in native row and column. */
-  pending: PendingPoint[];
-  seriesByStudy: Record<string, SeriesCard[]>;
-  /** Lock two panes to the same patient coordinate rather than the same index. */
+  /** Anchor index per pane; the lockstep offset is measured from these. */
+  anchors: number[];
   linked: boolean;
+  showHighlights: boolean;
   showGrid: boolean;
+  layers: { contour: boolean; heat: boolean; caliper: boolean; opacity: number };
+  setLayers: (patch: Partial<ViewerState["layers"]>) => void;
+  seriesByStudy: Record<string, SeriesCard[]>;
 
-  setTool: (tool: ToolName) => void;
-  addPoint: (point: PendingPoint) => void;
-  clearPoints: () => void;
+  reset: () => void;
+  setActivePane: (paneIndex: number) => void;
   setLinked: (linked: boolean) => void;
+  toggleHighlights: () => void;
   setShowGrid: (show: boolean) => void;
 
   loadSeriesList: (studyPath: string) => Promise<SeriesCard[]>;
+  mountPanes: (panes: { studyPath: string; studyUid: string; seriesUid: string }[]) => void;
   openSeries: (paneIndex: number, studyPath: string, seriesUid: string) => Promise<void>;
-  closePane: (paneIndex: number) => void;
-  setActivePane: (paneIndex: number) => void;
 
   patchPane: (paneIndex: number, patch: Partial<ViewerPane>) => void;
   setIndex: (paneIndex: number, index: number) => void;
   stepIndex: (paneIndex: number, delta: number) => void;
-  setPlane: (paneIndex: number, plane: PlaneName) => void;
+  setPlane: (plane: PlaneName) => void;
   setWindow: (paneIndex: number, window: Partial<WindowSetting>) => void;
   setView: (paneIndex: number, view: ViewState) => void;
-  setMip: (paneIndex: number, mipMm: number) => void;
-  jumpToRef: (ref: Ref, studyPath: string) => Promise<void>;
-  syncFromActive: () => Promise<void>;
+  setMip: (mipMm: number) => void;
+  resetView: () => void;
+  /** Land every pane on a chosen slice and make that the lockstep anchor. */
+  anchorAt: (targets: { paneIndex: number; index: number; window?: WindowSetting }[]) => void;
+  /** Take the current positions as the anchor pair, without moving anything. */
+  realign: () => void;
+}
+
+/**
+ * Millimetres between neighbouring slices of a plane.
+ *
+ * For the acquired axial stack that is the slice spacing. For a reformat the
+ * step is a pixel of the acquisition grid: coronal slices advance by the row
+ * spacing, sagittal ones by the column spacing.
+ */
+export function spacingMm(pane: ViewerPane): number {
+  const meta = pane.meta;
+  if (!meta) return 1;
+  if (pane.plane === "ax") {
+    const spacing = meta.geometry.slice_spacing_mm;
+    if (spacing && Number.isFinite(spacing) && spacing > 0) return spacing;
+    const [first, second] = meta.z_mm;
+    if (first !== undefined && second !== undefined) return Math.abs(second - first) || 1;
+    return 1;
+  }
+  const [row = 1, col = 1] = meta.geometry.pixel_spacing_mm ?? [1, 1];
+  return (pane.plane === "cor" ? row : col) || 1;
+}
+
+function countOf(pane: ViewerPane): number {
+  return pane.meta?.planes?.[pane.plane]?.count ?? 0;
+}
+
+function clampIndex(pane: ViewerPane, index: number): number {
+  const count = countOf(pane);
+  if (count <= 0) return 0;
+  return Math.max(0, Math.min(count - 1, Math.round(index)));
 }
 
 function defaultWindow(meta: SeriesMeta | null): WindowSetting {
-  if (!meta) return { ...(WINDOW_PRESETS[1] as WindowSetting) };
-  if (meta.geometry.modality === "CT") return { ...(WINDOW_PRESETS[1] as WindowSetting) };
+  if (!meta) return { ...(CT_WINDOWS[1] as WindowSetting) };
+  if (meta.geometry.modality === "CT") return { ...(CT_WINDOWS[1] as WindowSetting) };
   const auto = meta.windows.find((w) => w.name === "auto") ?? meta.windows[0];
   return auto
     ? { name: auto.name, center: auto.center, width: auto.width, invert: false }
     : { name: "auto", center: 0, width: 1, invert: false };
 }
 
-function emptyPane(studyPath: string, studyUid: string, seriesUid: string): ViewerPane {
+function blankPane(studyPath: string, studyUid: string, seriesUid: string): ViewerPane {
   return {
     studyPath,
     studyUid,
@@ -99,9 +156,8 @@ function emptyPane(studyPath: string, studyUid: string, seriesUid: string): View
     plane: "ax",
     index: 0,
     mipMm: 0,
-    window: { ...(WINDOW_PRESETS[1] as WindowSetting) },
+    window: { ...(CT_WINDOWS[1] as WindowSetting) },
     view: { ...IDENTITY_VIEW },
-    image: null,
     loading: true,
     error: null,
   };
@@ -110,16 +166,26 @@ function emptyPane(studyPath: string, studyUid: string, seriesUid: string): View
 export const useViewer = create<ViewerState>((set, get) => ({
   panes: [],
   activePane: 0,
-  tool: "browse",
-  pending: [],
-  seriesByStudy: {},
+  anchors: [],
   linked: true,
+  showHighlights: true,
   showGrid: false,
+  layers: { contour: true, heat: true, caliper: true, opacity: 0.4 },
+  setLayers: (patch) => set({ layers: { ...get().layers, ...patch } }),
+  seriesByStudy: {},
 
-  setTool: (tool) => set({ tool, pending: [] }),
-  addPoint: (point) => set({ pending: [...get().pending, point] }),
-  clearPoints: () => set({ pending: [] }),
-  setLinked: (linked) => set({ linked }),
+  reset: () => set({ panes: [], activePane: 0, anchors: [], showGrid: false }),
+
+  setActivePane: (activePane) => set({ activePane }),
+
+  // Turning the link on must never move the image the reader is looking at, so
+  // the current positions become the anchor pair.
+  setLinked: (linked) => {
+    set({ linked });
+    if (linked) get().realign();
+  },
+
+  toggleHighlights: () => set({ showHighlights: !get().showHighlights }),
   setShowGrid: (showGrid) => set({ showGrid }),
 
   loadSeriesList: async (studyPath) => {
@@ -130,45 +196,49 @@ export const useViewer = create<ViewerState>((set, get) => ({
     return result.series;
   },
 
+  mountPanes: (entries) =>
+    set({
+      panes: entries.map((entry) => blankPane(entry.studyPath, entry.studyUid, entry.seriesUid)),
+      anchors: entries.map(() => 0),
+      activePane: Math.max(0, entries.length - 1),
+    }),
+
   openSeries: async (paneIndex, studyPath, seriesUid) => {
     const panes = [...get().panes];
     const existing = panes[paneIndex];
-    panes[paneIndex] = { ...emptyPane(studyPath, existing?.studyUid ?? "", seriesUid) };
-    set({ panes, activePane: paneIndex });
+    panes[paneIndex] = blankPane(studyPath, existing?.studyUid ?? "", seriesUid);
+    set({ panes });
     try {
       const meta = await api.seriesMeta(studyPath, seriesUid);
       const next = [...get().panes];
       const pane = next[paneIndex];
+      // A slow answer that arrives after the reader moved on must not be
+      // stamped onto the series they switched to.
       if (!pane || pane.seriesUid !== seriesUid) return;
-      const count = meta.planes.ax.count;
+      const middle = Math.floor(meta.planes.ax.count / 2);
       next[paneIndex] = {
         ...pane,
         meta,
         studyUid: meta.geometry.study_uid,
-        index: Math.floor(count / 2),
+        index: middle,
         window: defaultWindow(meta),
         loading: false,
       };
-      set({ panes: next });
+      const anchors = [...get().anchors];
+      anchors[paneIndex] = middle;
+      set({ panes: next, anchors });
     } catch (error) {
       const next = [...get().panes];
       const pane = next[paneIndex];
-      // Same guard as the success path. A slow failure that resolves after the
-      // reader has already moved on must not stamp its error onto the series
-      // they switched to -- which looked exactly like "this series is broken
-      // too" and left the pane unusable.
       if (!pane || pane.seriesUid !== seriesUid) return;
-      next[paneIndex] = { ...pane, loading: false, error: error instanceof Error ? error.message : String(error) };
+      next[paneIndex] = {
+        ...pane,
+        loading: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
       set({ panes: next });
     }
   },
-
-  closePane: (paneIndex) => {
-    const panes = get().panes.filter((_, i) => i !== paneIndex);
-    set({ panes, activePane: Math.max(0, Math.min(get().activePane, panes.length - 1)) });
-  },
-
-  setActivePane: (activePane) => set({ activePane }),
 
   patchPane: (paneIndex, patch) => {
     const panes = [...get().panes];
@@ -179,10 +249,28 @@ export const useViewer = create<ViewerState>((set, get) => ({
   },
 
   setIndex: (paneIndex, index) => {
-    const pane = get().panes[paneIndex];
-    if (!pane?.meta) return;
-    const count = pane.meta.planes[pane.plane].count;
-    get().patchPane(paneIndex, { index: Math.max(0, Math.min(count - 1, Math.round(index))) });
+    const { panes, linked, anchors } = get();
+    const source = panes[paneIndex];
+    if (!source?.meta) return;
+    const wanted = clampIndex(source, index);
+    if (wanted === source.index) return;
+
+    if (!linked || panes.length < 2) {
+      get().patchPane(paneIndex, { index: wanted });
+      return;
+    }
+
+    const offsetMm = (wanted - (anchors[paneIndex] ?? 0)) * spacingMm(source);
+    set({
+      panes: panes.map((pane, i) => {
+        if (i === paneIndex) return { ...pane, index: wanted };
+        // Only a pane cut on the same plane can follow; a coronal reformat
+        // beside an axial stack is a different journey through the patient.
+        if (!pane.meta || pane.plane !== source.plane) return pane;
+        const target = clampIndex(pane, (anchors[i] ?? 0) + offsetMm / spacingMm(pane));
+        return target === pane.index ? pane : { ...pane, index: target };
+      }),
+    });
   },
 
   stepIndex: (paneIndex, delta) => {
@@ -191,85 +279,59 @@ export const useViewer = create<ViewerState>((set, get) => ({
     get().setIndex(paneIndex, pane.index + delta);
   },
 
-  setPlane: (paneIndex, plane) => {
-    const pane = get().panes[paneIndex];
-    if (!pane?.meta) return;
-    const count = pane.meta.planes[plane].count;
-    get().patchPane(paneIndex, {
-      plane,
-      index: Math.min(count - 1, Math.floor(count / 2)),
-      view: { ...IDENTITY_VIEW },
+  // The plane is a property of the reading, not of one pane: comparing an axial
+  // slice with a coronal reformat is not a comparison.
+  setPlane: (plane) => {
+    const panes = get().panes.map((pane) => {
+      if (!pane.meta) return pane;
+      const count = pane.meta.planes[plane]?.count ?? 0;
+      const target = pane.focus ? pane.focus[plane === "ax" ? 0 : plane === "cor" ? 1 : 2] : Math.floor(count / 2);
+      return { ...pane, plane, index: Math.max(0, Math.min(count - 1, Math.round(target))), view: { ...IDENTITY_VIEW } };
     });
+    set({ panes, anchors: panes.map((pane) => pane.index) });
   },
 
+  // Two studies windowed differently is not a comparison either, so while the
+  // panes are linked the window travels with them.
   setWindow: (paneIndex, patch) => {
     const { panes, linked } = get();
-    const pane = panes[paneIndex];
-    if (!pane) return;
-    // Two studies compared under different windows is not a comparison. While
-    // the panes are linked the window travels with them; unlink to window one
-    // study on its own.
-    const targets = linked ? panes.map((_, i) => i) : [paneIndex];
+    if (!panes[paneIndex]) return;
     set({
-      panes: panes.map((entry, i) =>
-        targets.includes(i) ? { ...entry, window: { ...entry.window, ...patch } } : entry,
+      panes: panes.map((pane, i) =>
+        linked || i === paneIndex ? { ...pane, window: { ...pane.window, ...patch } } : pane,
       ),
     });
   },
 
-  setView: (paneIndex, view) => get().patchPane(paneIndex, { view }),
-
-  setMip: (paneIndex, mipMm) => get().patchPane(paneIndex, { mipMm }),
-
-  /**
-   * Move the other panes to the same place in the patient.
-   *
-   * Two studies of the same person almost never share a slice index: the
-   * spacing differs, the coverage starts somewhere else, the patient lay
-   * differently. Linking by index would put a lesion next to a rib and call it
-   * progression. So the active pane's slice centre is converted to patient
-   * coordinates and each other pane is asked which of its slices holds that
-   * point.
-   */
-  syncFromActive: async () => {
-    const { panes, activePane, linked } = get();
-    const source = panes[activePane];
-    if (!linked || panes.length < 2 || !source?.meta || source.plane !== "ax") return;
-    const [, rows, cols] = source.meta.geometry.shape_zyx;
-    try {
-      const anchor = await api.point(source.studyPath, source.seriesUid, source.index, rows / 2, cols / 2);
-      await Promise.all(
-        panes.map(async (pane, index) => {
-          if (index === activePane || !pane.meta || pane.plane !== "ax") return;
-          const found = await api.locate(pane.studyPath, pane.seriesUid, anchor.patient_mm);
-          get().patchPane(index, { index: found.index });
-        }),
-      );
-    } catch {
-      // A study that cannot be located against is left where it is rather than
-      // moved somewhere plausible-looking.
-    }
+  setView: (paneIndex, view) => {
+    const { panes, linked } = get();
+    if (!panes[paneIndex]) return;
+    // Zoom and pan are shared while linked: side by side at different
+    // magnifications, one lesion looks twice the size of the other.
+    set({ panes: panes.map((pane, i) => (linked || i === paneIndex ? { ...pane, view } : pane)) });
   },
 
-  /**
-   * Fly to a cited address. The series is opened if needed, the slice is found
-   * by SOPInstanceUID rather than by index, and the pane is left showing the
-   * exact pixel the claim points at.
-   */
-  jumpToRef: async (ref, studyPath) => {
-    const state = get();
-    let paneIndex = state.panes.findIndex((p) => p.seriesUid === ref.series_uid);
-    if (paneIndex < 0) {
-      paneIndex = state.panes.length ? state.activePane : 0;
-      if (!state.panes.length) set({ panes: [emptyPane(studyPath, ref.study_uid, ref.series_uid)] });
-      await get().openSeries(paneIndex, studyPath, ref.series_uid);
+  setMip: (mipMm) => set({ panes: get().panes.map((pane) => ({ ...pane, mipMm })) }),
+
+  resetView: () => set({ panes: get().panes.map((pane) => ({ ...pane, view: { ...IDENTITY_VIEW } })) }),
+
+  anchorAt: (targets) => {
+    const panes = [...get().panes];
+    const anchors = [...get().anchors];
+    for (const target of targets) {
+      const pane = panes[target.paneIndex];
+      if (!pane) continue;
+      const index = clampIndex(pane, target.index);
+      panes[target.paneIndex] = { ...pane, index, ...(target.window ? { window: target.window } : {}) };
+      anchors[target.paneIndex] = index;
     }
-    const pane = get().panes[paneIndex];
-    if (!pane?.meta) return;
-    const index = pane.meta.sop_uids.indexOf(ref.sop_uid);
-    if (index >= 0) {
-      get().patchPane(paneIndex, { plane: "ax", index });
-      set({ activePane: paneIndex });
-    }
+    // A pane the jump said nothing about keeps its position, and its anchor is
+    // refreshed so the next wheel gesture starts from where it actually is.
+    panes.forEach((pane, i) => {
+      if (!targets.some((t) => t.paneIndex === i)) anchors[i] = pane.index;
+    });
+    set({ panes, anchors });
   },
+
+  realign: () => set({ anchors: get().panes.map((pane) => pane.index) }),
 }));

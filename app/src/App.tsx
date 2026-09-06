@@ -1,27 +1,35 @@
-/** Application shell: connect to the sidecar, then shelf → workspace → report. */
+/**
+ * Application shell.
+ *
+ * Three screens and one rule about moving between them: the library, the
+ * reading, the documents. A review is opened from a session file the sidecar
+ * already knows about, or prepared fresh from one or two study folders; either
+ * way the reading screen is only ever entered with a session in hand, so it
+ * never has to render a "no data" state.
+ */
 import { useCallback, useEffect, useState } from "react";
 import { api } from "./api/client";
 import type { LocaleBundle } from "./api/types";
 import { useConnection } from "./state/connection";
+import { useLibrary } from "./state/library";
 import { useSession } from "./state/session";
 import { useShelf } from "./state/shelf";
 import { useViewer } from "./state/viewer";
-import { ReportScreen } from "./view/ReportScreen";
+import { ErrorBoundary } from "./view/ErrorBoundary";
+import { Home } from "./view/Home";
 import { IdentityGate } from "./view/IdentityGate";
-import { Shelf } from "./view/Shelf";
-import { Workspace } from "./view/Workspace";
+import { Review } from "./view/Review";
 
-type Screen = "shelf" | "workspace" | "report";
+type Screen = "home" | "review";
 
 export default function App() {
   const { status, error, connect } = useConnection();
-  const [screen, setScreen] = useState<Screen>("shelf");
+  const [screen, setScreen] = useState<Screen>("home");
   const [locale, setLocale] = useState<LocaleBundle | null>(null);
-  const [opening, setOpening] = useState(false);
-  const [openError, setOpenError] = useState<string | null>(null);
-  const [identityGate, setIdentityGate] = useState<{ folders: string[]; message: string } | null>(null);
-  const prepare = useSession((s) => s.prepare);
-  const closeSession = useSession((s) => s.close);
+  const [opening, setOpening] = useState<string | null>(null);
+  const [preparing, setPreparing] = useState(false);
+  const [failure, setFailure] = useState<string | null>(null);
+  const [gate, setGate] = useState<{ folders: string[]; message: string } | null>(null);
   const root = useShelf((s) => s.root);
 
   useEffect(() => {
@@ -34,44 +42,71 @@ export default function App() {
       .locale("tr")
       .then((result) => setLocale(result.locale))
       .catch(() => undefined);
+
+    // A session handed in on the URL is how the agent bridge and a saved
+    // shortcut both arrive; it goes straight to the reading.
+    const params = new URLSearchParams(window.location.search);
+    const wanted = params.get("session");
+    if (wanted) {
+      void useSession
+        .getState()
+        .open(wanted)
+        .then(() => setScreen("review"))
+        .catch((e: unknown) => setFailure(e instanceof Error ? e.message : String(e)));
+    }
   }, [status]);
 
-  const open = useCallback(
-    async (paths: string[], identitySource?: string) => {
-      setOpening(true);
-      setOpenError(null);
+  const openSession = useCallback(async (path: string) => {
+    setOpening(path);
+    setFailure(null);
+    useViewer.getState().reset();
+    try {
+      await useSession.getState().open(path);
+      setScreen("review");
+    } catch (e) {
+      setFailure(e instanceof Error ? e.message : String(e));
+    } finally {
+      setOpening(null);
+    }
+  }, []);
+
+  const prepare = useCallback(
+    async (folders: string[], identitySource?: string) => {
+      setPreparing(true);
+      setFailure(null);
       try {
-        // The session is prepared against the scanned root, so the engine
-        // resolves study folders exactly as `openrad prepare` would. `repo` is
-        // left to the sidecar, which puts the session in the application's
-        // workspace rather than inside the patient's folder.
-        await prepare({
-          studies_root: root,
-          folders: paths,
+        // Prepared against the scanned root, so the engine resolves study
+        // folders exactly as `openrad prepare` would. `repo` is left to the
+        // sidecar, which puts the session in the application's own workspace
+        // rather than inside the patient's folder.
+        await useSession.getState().prepare({
+          ...(root ? { studies_root: root } : {}),
+          folders,
           lang: "tr",
           ...(identitySource ? { identity_source: identitySource } : {}),
         });
-        useViewer.setState({ panes: [], activePane: 0, pending: [] });
-        setIdentityGate(null);
-        setScreen("workspace");
+        useViewer.getState().reset();
+        setGate(null);
+        setScreen("review");
+        void useLibrary.getState().refresh();
       } catch (e) {
         const message = e instanceof Error ? e.message : String(e);
         // The engine refuses to compare exports whose patient identifiers
         // differ. That is a question for the reader, not an error to report.
         if (/patient identifier/i.test(message) || /identity evidence/i.test(message)) {
-          setIdentityGate({ folders: paths, message });
+          setGate({ folders, message });
         } else {
-          setOpenError(message);
+          setFailure(message);
         }
       } finally {
-        setOpening(false);
+        setPreparing(false);
       }
     },
-    [prepare, root],
+    [root],
   );
 
   if (status === "connecting") {
-    return <Splash message="Motor bağlantısı kuruluyor…" />;
+    return <Splash message="Motora bağlanılıyor…" />;
   }
   if (status === "failed") {
     return (
@@ -88,48 +123,60 @@ export default function App() {
   }
 
   return (
-    <div className="relative h-full w-full">
-      {openError && (
-        <div className="absolute inset-x-0 top-0 z-50 bg-alarm-900 px-4 py-2 text-center text-xs text-alarm-400">
-          {openError}
-          <button type="button" className="ml-3 underline" onClick={() => setOpenError(null)}>
-            kapat
-          </button>
-        </div>
-      )}
-      {screen === "shelf" && <Shelf onOpen={(paths) => void open(paths)} busy={opening} />}
-      {identityGate && root && (
-        <IdentityGate
-          studiesRoot={root}
-          folders={identityGate.folders}
-          message={identityGate.message}
-          onCancel={() => setIdentityGate(null)}
-          onConfirm={(identitySource) => void open(identityGate.folders, identitySource)}
-        />
-      )}
-      {screen === "workspace" && (
-        <Workspace
-          locale={locale}
-          onBack={() => {
-            closeSession();
-            setScreen("shelf");
-          }}
-          onReport={() => setScreen("report")}
-        />
-      )}
-      {screen === "report" && <ReportScreen locale={locale} onBack={() => setScreen("workspace")} />}
-    </div>
+    <ErrorBoundary fallbackTitle="Uygulamada bir sorun oluştu">
+      <div className="relative h-full w-full bg-ink-950">
+        {failure && (
+          <div className="fade-in absolute inset-x-0 top-0 z-50 flex items-center justify-center gap-3 border-b border-alert-400/30 bg-alert-900 px-4 py-2 text-[12px] text-alert-400">
+            <span className="truncate">{failure}</span>
+            <button type="button" className="shrink-0 underline" onClick={() => setFailure(null)}>
+              kapat
+            </button>
+          </div>
+        )}
+
+        {screen === "home" && (
+          <Home
+            opening={opening}
+            preparing={preparing}
+            onOpenSession={(path) => void openSession(path)}
+            onPrepare={(folders) => void prepare(folders)}
+          />
+        )}
+
+        {screen === "review" && <Review locale={locale} onHome={() => setScreen("home")} />}
+
+        {gate && root && (
+          <IdentityGate
+            studiesRoot={root}
+            folders={gate.folders}
+            message={gate.message}
+            onCancel={() => setGate(null)}
+            onConfirm={(identitySource) => void prepare(gate.folders, identitySource)}
+          />
+        )}
+      </div>
+    </ErrorBoundary>
   );
 }
 
-function Splash({ message, detail, action }: { message: string; detail?: string; action?: React.ReactNode }) {
+function Splash({
+  message,
+  detail,
+  action,
+}: {
+  message: string;
+  detail?: string;
+  action?: React.ReactNode;
+}) {
   return (
-    <div className="grid h-full place-items-center">
-      <div className="max-w-md text-center">
-        <div className="mx-auto mb-4 h-6 w-6 rounded-full border border-amber-400/50 pulse-ring" />
-        <p className="text-[13px] text-chalk-300">{message}</p>
-        {detail && <p className="readout mt-2 text-[11px] leading-relaxed text-chalk-600">{detail}</p>}
-        {action && <div className="mt-4">{action}</div>}
+    <div className="grid h-full place-items-center bg-ink-950">
+      <div className="max-w-md px-8 text-center">
+        <div className="mx-auto mb-5 h-6 w-6 rounded-full border-2 border-amber-400/25 border-t-amber-400 spin" />
+        <p className="display text-[17px]">{message}</p>
+        {detail && (
+          <p className="readout mt-3 text-[11px] leading-relaxed text-chalk-600">{detail}</p>
+        )}
+        {action && <div className="mt-6">{action}</div>}
       </div>
     </div>
   );

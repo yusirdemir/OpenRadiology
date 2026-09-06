@@ -96,15 +96,15 @@ export function PageViewer({ pagePath, purpose, workDir, sessionPath, requestedB
   const remaining = Math.max(0, Math.ceil(((1 - dwell) * policy.minDwellMs) / 100) / 10);
 
   return (
-    <div className="absolute inset-0 z-50 grid grid-rows-[auto_1fr_auto] bg-ink-950/96 backdrop-blur-sm">
+    <div className="absolute inset-0 z-50 grid grid-rows-[auto_1fr_auto] bg-ink-1000/92 backdrop-blur-sm">
       <header className="flex items-center gap-3 border-b border-[var(--hairline-strong)] px-4 py-2.5">
-        {requestedByAgent && <span className="chip border-amber-400/50 text-amber-400">ajan istedi</span>}
+        {requestedByAgent && <span className="chip border-amber-400/45 text-amber-400">ajan istedi</span>}
         <div className="min-w-0">
           <p className="truncate text-[12px] text-chalk-100">
             {pagePath.split("/").pop()}
-            {purpose && <span className="ml-2 text-chalk-600">{purpose}</span>}
+            {purpose && <span className="ml-2 text-chalk-700">{purpose}</span>}
           </p>
-          <p className="text-[10px] text-chalk-600">
+          <p className="text-[10px] text-chalk-700">
             Doğal çözünürlükte gösteriliyor; küçültülmüş bir kontakt sayfası hiçbir şeyi tasdik etmez.
           </p>
         </div>
@@ -113,16 +113,16 @@ export function PageViewer({ pagePath, purpose, workDir, sessionPath, requestedB
       </header>
 
       <div className="scroll-y min-h-0 bg-black">
-        {error && <p className="p-4 text-xs text-alarm-400">{error}</p>}
+        {error && <p className="p-4 text-xs text-alert-400">{error}</p>}
         {source ? (
           <img src={source} alt="" className="max-w-none" style={{ imageRendering: "pixelated" }} />
         ) : (
-          !error && <p className="p-4 text-xs text-chalk-600">sayfa yükleniyor…</p>
+          !error && <p className="p-4 text-xs text-chalk-700">sayfa yükleniyor…</p>
         )}
       </div>
 
       <footer className="flex items-center gap-2 border-t border-[var(--hairline-strong)] px-4 py-2.5">
-        <p className="flex-1 text-[11px] text-chalk-500">
+        <p className="flex-1 text-[11px] text-chalk-600">
           {ready ? "Bu sayfa tasdik edilebilir." : `Tasdik için ${remaining} sn daha görüntülenmeli.`}
         </p>
         <button type="button" className="btn" disabled={busy} onClick={() => onDismiss(true)}>
@@ -147,7 +147,7 @@ export function DwellMeter({ progress }: { progress: number }) {
         cy="12"
         r={radius}
         fill="none"
-        stroke={progress >= 1 ? "#4ade80" : "#ffb454"}
+        stroke={progress >= 1 ? "#4fd6a0" : "#ffb454"}
         strokeWidth="2"
         strokeLinecap="round"
         strokeDasharray={circumference}

@@ -8,7 +8,7 @@
  * report render free of a raw-HTML path, which is worth more than generality
  * in a document that carries patient findings.
  */
-export type Inline = { text: string; bold?: boolean; code?: boolean };
+export type Inline = { text: string; bold?: boolean; code?: boolean; href?: string };
 
 export type Block =
   | { type: "heading"; level: 1 | 2 | 3 | 4; content: Inline[] }
@@ -29,16 +29,31 @@ const isFence = (line: string): boolean => line.trimStart().startsWith(FENCE_MAR
 const TABLE_ROW = /^\s*\|(.+)\|\s*$/;
 const TABLE_DIVIDER = /^\s*\|[\s:|-]+\|\s*$/;
 
-/** Split a line into bold, code and plain runs. Unmatched markers stay literal. */
+/**
+ * Split a line into bold, code, link and plain runs. Unmatched markers stay
+ * literal.
+ *
+ * Links in the engine's documents point at sibling files on disk -- the
+ * professional report from the patient guide, a measurement's evidence file
+ * from a claim. There is nothing useful for a browser to do with those, but
+ * printing `[name](name)` at the reader was worse than either opening them or
+ * saying nothing, so the text is kept and the target moves to the title.
+ */
 export function parseInline(raw: string): Inline[] {
   const out: Inline[] = [];
-  const pattern = /(\*\*[^*]+\*\*|`[^`]+`)/g;
+  const pattern = /(\*\*[^*]+\*\*|`[^`]+`|\[[^\]\n]+\]\([^)\s]*\))/g;
   let cursor = 0;
   for (let match = pattern.exec(raw); match !== null; match = pattern.exec(raw)) {
     if (match.index > cursor) out.push({ text: raw.slice(cursor, match.index) });
     const token = match[0];
-    if (token.startsWith("**")) out.push({ text: token.slice(2, -2), bold: true });
-    else out.push({ text: token.slice(1, -1), code: true });
+    if (token.startsWith("**")) {
+      out.push({ text: token.slice(2, -2), bold: true });
+    } else if (token.startsWith("[")) {
+      const split = token.indexOf("](");
+      out.push({ text: token.slice(1, split), href: token.slice(split + 2, -1) });
+    } else {
+      out.push({ text: token.slice(1, -1), code: true });
+    }
     cursor = match.index + token.length;
   }
   if (cursor < raw.length) out.push({ text: raw.slice(cursor) });
@@ -51,7 +66,13 @@ function splitRow(line: string): Inline[][] {
 }
 
 export function parseMarkdown(source: string): Block[] {
-  const lines = source.replace(/\r\n/g, "\n").split("\n");
+  // The engine stamps a provenance comment at the top of every document. It is
+  // there for whatever reads the file next, not for the person reading the
+  // report, and printing it verbatim was the first thing on the page.
+  const lines = source
+    .replace(/\r\n/g, "\n")
+    .replace(/<!--[\s\S]*?-->/g, "")
+    .split("\n");
   const blocks: Block[] = [];
   let paragraph: string[] = [];
 

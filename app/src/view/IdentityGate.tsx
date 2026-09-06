@@ -44,23 +44,23 @@ export function IdentityGate({ studiesRoot, folders, message, onConfirm, onCance
   const usable = candidates?.filter((c) => c.covers_all) ?? [];
 
   return (
-    <div className="absolute inset-0 z-50 grid place-items-center bg-ink-950/92 p-8 backdrop-blur-sm">
-      <div className="panel w-[620px] max-w-full">
+    <div className="absolute inset-0 z-50 grid place-items-center bg-ink-1000/88 p-8 backdrop-blur-sm">
+      <div className="surface w-[620px] max-w-full">
         <header className="border-b border-[var(--hairline)] px-4 py-3">
           <h2 className="text-[14px] font-semibold text-chalk-100">Bu çekimler aynı kişiye mi ait?</h2>
-          <p className="mt-1 text-[11px] leading-relaxed text-chalk-500">
+          <p className="mt-1 text-[11px] leading-relaxed text-chalk-600">
             Seçtiğiniz çekimlerin DICOM başlıklarındaki hasta kimlikleri birbirini tutmuyor. Motor,
             aynı kişi olduğu belgelenmeden karşılaştırma yapmayı reddediyor — iki farklı hastayı
             kıyaslamak, kendinden emin ve yanlış bir rapor üretir.
           </p>
-          <p className="readout mt-2 text-[10px] text-chalk-600">{message}</p>
+          <p className="readout mt-2 text-[10px] text-chalk-700">{message}</p>
         </header>
 
         <div className="max-h-[280px] overflow-y-auto p-4">
-          <p className="rail-label mb-2">Aynı kişi olduğunu belgeleyen dosya</p>
-          {candidates === null && <p className="text-[11px] text-chalk-600">arşiv taranıyor…</p>}
+          <p className="eyebrow mb-2">Aynı kişi olduğunu belgeleyen dosya</p>
+          {candidates === null && <p className="text-[11px] text-chalk-700">arşiv taranıyor…</p>}
           {candidates !== null && usable.length === 0 && (
-            <p className="text-[11px] leading-relaxed text-caution-400">
+            <p className="text-[11px] leading-relaxed text-warn-400">
               Arşivde seçtiğiniz klasörlerin hepsini adıyla anan bir belge bulunamadı. Böyle bir
               belge oluşturup her klasör adını içine yazın, ya da çekimleri tek tek inceleyin.
             </p>
@@ -71,7 +71,7 @@ export function IdentityGate({ studiesRoot, folders, message, onConfirm, onCance
                 <button
                   type="button"
                   onClick={() => setChosen(candidate.path)}
-                  className={`flex w-full items-center gap-2 rounded-[2px] border px-2.5 py-2 text-left ${
+                  className={`flex w-full items-center gap-2 rounded-[6px] border px-2.5 py-2 text-left ${
                     chosen === candidate.path
                       ? "border-amber-400/60 bg-amber-900/25"
                       : "border-[var(--hairline)] hover:bg-ink-850"
@@ -80,7 +80,7 @@ export function IdentityGate({ studiesRoot, folders, message, onConfirm, onCance
                   <span className="text-amber-400">{chosen === candidate.path ? "◉" : "○"}</span>
                   <span className="min-w-0">
                     <span className="block truncate text-[12px] text-chalk-100">{candidate.name}</span>
-                    <span className="readout block truncate text-[10px] text-chalk-600">
+                    <span className="readout block truncate text-[10px] text-chalk-700">
                       seçilen {folders.length} klasörün hepsini adıyla anıyor
                     </span>
                   </span>
@@ -99,11 +99,11 @@ export function IdentityGate({ studiesRoot, folders, message, onConfirm, onCance
               Başka bir dosya seç…
             </button>
           )}
-          {error && <p className="mt-2 text-[11px] text-alarm-400">{error}</p>}
+          {error && <p className="mt-2 text-[11px] text-alert-400">{error}</p>}
         </div>
 
         <footer className="flex items-center gap-2 border-t border-[var(--hairline)] px-4 py-3">
-          <p className="flex-1 text-[10px] leading-relaxed text-chalk-600">
+          <p className="flex-1 text-[10px] leading-relaxed text-chalk-700">
             Seçtiğiniz dosyanın SHA-256 özeti oturuma kimlik kanıtı olarak yazılır ve başlık
             uyuşmazlığı raporun kısıtlar bölümünde kalır.
           </p>

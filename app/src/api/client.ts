@@ -17,6 +17,10 @@ import type {
   LocaleBundle,
   CheckResult,
   JobSnapshot,
+  LesionSegmentation,
+  LesionProfile,
+  Voxel,
+  VolumePreview,
   MeasureResult,
   PlaneName,
   SeriesCard,
@@ -108,13 +112,75 @@ export interface SliceQuery {
 }
 
 /**
+ * Bytes per ranged request.
+ *
+ * Chosen from a measurement, not from taste. On some machines a loopback write
+ * larger than one 16 KiB TCP segment stalls for roughly 230 ms per block; below
+ * that boundary the same link runs at three hundred megabytes a second. Fetching
+ * a half-megabyte slice as ranges of fourteen kilobytes took it from 7.3
+ * seconds to 4.9 milliseconds. On a machine without the fault the extra
+ * requests cost a millisecond or two, which is why there is one code path
+ * rather than two.
+ */
+const SLICE_CHUNK = 14 * 1024;
+
+/**
+ * Read a response as byte ranges small enough to stay under the cliff.
+ *
+ * The first request doubles as the metadata request: its headers carry
+ * everything the caller needs and its `Content-Range` gives the total, after
+ * which the remainder is pulled in parallel and reassembled. A server that does
+ * not do ranges answers the first request with the whole body and the loop
+ * never runs, so this is safe against any backend.
+ */
+async function fetchRanged(
+  target: string,
+  signal?: AbortSignal,
+): Promise<{ bytes: Uint8Array; headers: Headers }> {
+  const head = await fetch(target, {
+    headers: authHeaders({ Range: `bytes=0-${SLICE_CHUNK - 1}` }),
+    signal,
+  });
+  if (!head.ok) await raise(head);
+
+  const headers = head.headers;
+  const first = new Uint8Array(await head.arrayBuffer());
+  const contentRange = headers.get("Content-Range");
+  const total = contentRange ? Number(contentRange.split("/")[1]) : first.byteLength;
+  if (!Number.isFinite(total) || total <= first.byteLength) return { bytes: first, headers };
+
+  const bytes = new Uint8Array(total);
+  bytes.set(first, 0);
+  const starts: number[] = [];
+  for (let start = first.byteLength; start < total; start += SLICE_CHUNK) starts.push(start);
+  await Promise.all(
+    starts.map(async (start) => {
+      const end = Math.min(start + SLICE_CHUNK, total) - 1;
+      const part = await fetch(target, {
+        headers: authHeaders({ Range: `bytes=${start}-${end}` }),
+        signal,
+      });
+      if (!part.ok) await raise(part);
+      bytes.set(new Uint8Array(await part.arrayBuffer()), start);
+    }),
+  );
+  return { bytes, headers };
+}
+
+/**
  * One image as raw calibrated samples.
  *
  * The bytes are the engine's values -- Hounsfield units, SUV, MR signal -- not
  * display grey. Windowing happens on the GPU from these, so changing window
  * width or level costs nothing and never needs another request.
+ *
+ * The image arrives as byte ranges. The first range doubles as the metadata
+ * request: its headers carry the calibration and its `Content-Range` gives the
+ * total, after which the remainder is pulled in parallel and reassembled. A
+ * server that does not do ranges answers the first request with the whole
+ * image and the rest of this function does nothing.
  */
-export async function fetchSlice(query: SliceQuery, signal?: AbortSignal): Promise<SliceImage> {
+function sliceUrl(query: SliceQuery): string {
   const { url } = handshake();
   const params = new URLSearchParams({
     study: query.study,
@@ -125,16 +191,28 @@ export async function fetchSlice(query: SliceQuery, signal?: AbortSignal): Promi
   if (query.mipMm) params.set("mip", String(query.mipMm));
   if (query.thickPx && query.thickPx > 1) params.set("thick", String(query.thickPx));
   if (query.allowTilt) params.set("allow_tilt", "1");
+  return `${url}/series/slice?${params}`;
+}
 
-  const response = await fetch(`${url}/series/slice?${params}`, { headers: authHeaders(), signal });
-  if (!response.ok) await raise(response);
-  const buffer = await response.arrayBuffer();
-  const headers = response.headers;
+/**
+ * One image as raw calibrated samples.
+ *
+ * The bytes are the engine's values -- Hounsfield units, SUV, MR signal -- not
+ * display grey. Windowing happens on the GPU from these, so changing window
+ * width or level costs nothing and never needs another request.
+ */
+export async function fetchSlice(query: SliceQuery, signal?: AbortSignal): Promise<SliceImage> {
+  const { bytes, headers } = await fetchRanged(sliceUrl(query), signal);
   const [rows = 0, cols = 0] = parseNumberPair(headers.get("X-Shape"));
   const dtype = headers.get("X-Dtype") ?? "float32";
   const zRaw = headers.get("X-Z-Mm");
+  // The buffer is exactly the image, so the typed view can wrap it directly.
+  const pixels =
+    dtype === "int16"
+      ? new Int16Array(bytes.buffer, bytes.byteOffset, bytes.byteLength / 2)
+      : new Float32Array(bytes.buffer, bytes.byteOffset, bytes.byteLength / 4);
   return {
-    pixels: dtype === "int16" ? new Int16Array(buffer) : new Float32Array(buffer),
+    pixels,
     rows,
     cols,
     mmPerPx: parseNumberPair(headers.get("X-Mm-Per-Px")),
@@ -160,9 +238,11 @@ export async function fetchSlice(query: SliceQuery, signal?: AbortSignal): Promi
  */
 export async function fetchFile(path: string): Promise<Blob> {
   const { url } = handshake();
-  const response = await fetch(`${url}/files?path=${encodeURIComponent(path)}`, { headers: authHeaders() });
-  if (!response.ok) await raise(response);
-  return response.blob();
+  // Session files run to a megabyte or two, so they take the same ranged path
+  // the images do: on a link that stalls above one segment, a whole-body read
+  // of the library is the slowest thing the application does.
+  const { bytes, headers } = await fetchRanged(`${url}/files?path=${encodeURIComponent(path)}`);
+  return new Blob([bytes as BlobPart], { type: headers.get("Content-Type") ?? "application/octet-stream" });
 }
 
 export async function fetchText(path: string): Promise<string> {
@@ -268,6 +348,27 @@ export const api = {
 
   measure: (payload: Record<string, unknown>) => post<MeasureResult>("/measure", payload),
 
+  /** Grow the finding at a cited address, so it can be marked on every slice. */
+  lesion: (payload: {
+    study: string;
+    series: string;
+    index: number;
+    row: number;
+    col: number;
+    radius_mm?: number;
+    profile?: LesionProfile;
+    positive?: Voxel[];
+    negative?: Voxel[];
+    brush_mm?: number;
+  }) => post<LesionSegmentation>("/series/lesion", payload),
+
+  volumePreview: (study: string, series: string) => post<VolumePreview>("/series/volume", { study, series }),
+
+  /** Directory listing inside the sidecar's path jail. Used to find sessions. */
+  filesList: (path: string, glob = "*") =>
+    get<{ path: string; entries: { path: string; name: string; size: number; modified: number; dir: boolean }[] }>(
+      `/files/list?path=${encodeURIComponent(path)}&glob=${encodeURIComponent(glob)}`,
+    ),
   prepare: (payload: Record<string, unknown>) =>
     post<{ session_path: string; session: Session }>("/session/prepare", payload),
   session: (path: string) =>

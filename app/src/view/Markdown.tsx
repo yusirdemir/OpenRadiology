@@ -8,6 +8,13 @@ function Runs({ content }: { content: Inline[] }) {
       {content.map((run, i) => {
         if (run.code) return <code key={i}>{run.text}</code>;
         if (run.bold) return <strong key={i}>{run.text}</strong>;
+        if (run.href !== undefined) {
+          return (
+            <span key={i} className="underline decoration-dotted underline-offset-2" title={run.href}>
+              {run.text}
+            </span>
+          );
+        }
         return <Fragment key={i}>{run.text}</Fragment>;
       })}
     </>
@@ -46,7 +53,7 @@ function BlockView({ block }: { block: Block }) {
       );
     case "code":
       return (
-        <pre className="readout overflow-x-auto rounded-[2px] border border-[var(--hairline)] bg-ink-950 p-2 text-[11px]">
+        <pre className="readout overflow-x-auto rounded-[6px] border border-[var(--hairline)] bg-ink-1000 p-3 text-[11px]">
           {block.text}
         </pre>
       );

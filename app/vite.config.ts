@@ -36,6 +36,7 @@ function sidecarProxy(): Plugin {
     name: "openrad-sidecar-proxy",
     configureServer(server) {
       server.middlewares.use("/api", (request, response) => {
+        response.socket?.setNoDelay(true);
         const handshake = read();
         if (!handshake) {
           response.statusCode = 503;
@@ -59,9 +60,29 @@ function sidecarProxy(): Plugin {
               for (const [key, value] of Object.entries(upstreamResponse.headers)) {
                 if (value !== undefined) response.setHeader(key, value);
               }
-              upstreamResponse.pipe(response);
+              /*
+               * Bounded bodies are collected and written once.
+               *
+               * Piping writes the headers and then each chunk separately, and
+               * on a machine whose loopback punishes the write-write-read
+               * pattern that second hop costs as much as the first -- about
+               * two hundred milliseconds per response. Everything this proxy
+               * carries is small, because the viewer asks for byte ranges, so
+               * buffering into a single `end` removes the interaction. Event
+               * streams keep piping: not being buffered is their whole point.
+               */
+              const kind = String(upstreamResponse.headers["content-type"] ?? "");
+              if (kind.startsWith("text/event-stream")) {
+                upstreamResponse.pipe(response);
+                return;
+              }
+              const parts: Buffer[] = [];
+              upstreamResponse.on("data", (chunk: Buffer) => parts.push(chunk));
+              upstreamResponse.on("end", () => response.end(Buffer.concat(parts)));
+              upstreamResponse.on("error", () => response.end());
             },
           );
+          upstream.setNoDelay(true);
           upstream.on("error", (error) => {
             response.statusCode = 502;
             response.end(JSON.stringify({ error: String(error) }));

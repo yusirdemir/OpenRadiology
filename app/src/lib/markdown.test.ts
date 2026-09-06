@@ -15,6 +15,14 @@ describe("inline", () => {
   it("leaves an unmatched marker as literal text", () => {
     expect(parseInline("2 ** 3")).toEqual([{ text: "2 ** 3" }]);
   });
+
+  it("keeps a link's text and moves its target out of the way", () => {
+    expect(parseInline("Teknik rapor: [rapor.md](rapor.md).")).toEqual([
+      { text: "Teknik rapor: " },
+      { text: "rapor.md", href: "rapor.md" },
+      { text: "." },
+    ]);
+  });
 });
 
 describe("blocks", () => {
@@ -48,6 +56,11 @@ describe("blocks", () => {
 
   it("reads a block quote", () => {
     expect(parseMarkdown("> dikkat\n")[0]).toEqual({ type: "quote", content: [{ text: "dikkat" }] });
+  });
+
+  it("drops the provenance comment rather than printing it", () => {
+    const blocks = parseMarkdown("<!-- generated-by: openrad finish -->\n\n# Başlık\n");
+    expect(blocks).toEqual([{ type: "heading", level: 1, content: [{ text: "Başlık" }] }]);
   });
 
   it("never produces raw HTML", () => {

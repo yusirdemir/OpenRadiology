@@ -12,7 +12,7 @@
  * linearly filtered and would need a second sampler type and a second program;
  * one code path that can filter is worth a 0.3 ms conversion per slice.
  */
-import type { SliceImage } from "../api/types";
+import type { SliceImage, LesionSlice } from "../api/types";
 import { displayRect, screenPxPerImagePx, type CanvasSize, type ImageGeometry, type ViewState } from "./viewport";
 
 const VERTEX_SHADER = `#version 300 es
@@ -35,6 +35,18 @@ uniform sampler2D uImage;
 uniform float uCenter;
 uniform float uWidth;
 uniform bool  uInvert;
+uniform sampler2D uMask;
+uniform bool uHasMask;
+uniform bool uHeat;
+uniform bool uContour;
+uniform vec4 uMaskRect;
+uniform vec2 uHeatRange;
+uniform float uHeatAlpha;
+float labelAt(ivec2 p) {
+  ivec2 n = textureSize(uMask, 0);
+  if (any(lessThan(p, ivec2(0))) || any(greaterThanEqual(p, n))) return 0.0;
+  return texelFetch(uMask, p, 0).r;
+}
 
 uniform sampler2D uOverlay;
 uniform bool  uHasOverlay;
@@ -46,6 +58,11 @@ uniform float uOverlayFloor;   // below this fraction the overlay is transparent
 
 float windowed(float value, float center, float width) {
   return clamp((value - (center - width * 0.5)) / max(width, 1e-6), 0.0, 1.0);
+}
+
+// Flame ramp for lesion heat: ember -> orange -> yellow -> white, luminance monotone.
+vec3 flame(float t) {
+  return clamp(vec3(0.35 + t * 1.3, t * 1.55 - 0.25, t * 2.6 - 1.7), 0.0, 1.0);
 }
 
 // Hot-metal ramp for PET. Monotone in luminance so a brighter pixel always
@@ -70,6 +87,39 @@ void main() {
       }
     }
   }
+  if (uHasMask) {
+    vec2 pixel = vUv * vec2(textureSize(uImage, 0));
+    ivec2 q = ivec2(floor(pixel)) - ivec2(uMaskRect.xy);
+    if (labelAt(q) > 0.5) {
+      float hu = texelFetch(uImage, ivec2(floor(pixel)), 0).r;
+      float t = clamp((hu - uHeatRange.x) / max(uHeatRange.y - uHeatRange.x, 1.0), 0.0, 1.0);
+      // Flame ramp confined to the mask: ember red through orange to white-hot,
+      // monotone in luminance so brighter always means denser tissue.
+      vec3 heat = flame(t);
+      if (uHeat) {
+        // Pixels near the boundary get an inner rim so the confinement reads as a glowing edge.
+        float rim = 0.0;
+        for (int dy = -2; dy <= 2; dy++) for (int dx = -2; dx <= 2; dx++)
+          if (labelAt(q + ivec2(dx, dy)) < 0.5) rim += 1.0;
+        rim = clamp(rim / 8.0, 0.0, 1.0);
+        rgb = mix(rgb, heat, uHeatAlpha * (0.5 + 0.5 * t));
+        rgb += vec3(1.0, 0.72, 0.30) * rim * 0.22 * uHeatAlpha;
+      }
+      vec2 edgeWidth = min(vec2(1.0), fwidth(pixel) * 1.25);
+      vec2 f = fract(pixel);
+      bool border = (labelAt(q + ivec2(-1,0)) < 0.5 && f.x < edgeWidth.x)
+        || (labelAt(q + ivec2(1,0)) < 0.5 && 1.0-f.x < edgeWidth.x)
+        || (labelAt(q + ivec2(0,-1)) < 0.5 && f.y < edgeWidth.y)
+        || (labelAt(q + ivec2(0,1)) < 0.5 && 1.0-f.y < edgeWidth.y);
+      if (uContour && border) rgb = vec3(0.24, 0.94, 0.95);
+    } else if (uHeat) {
+      // A soft halo just outside the boundary: the glow bleeds two pixels, never further.
+      float near = 0.0;
+      for (int dy = -2; dy <= 2; dy++) for (int dx = -2; dx <= 2; dx++)
+        if (labelAt(q + ivec2(dx, dy)) > 0.5) near += 1.0 / (1.0 + float(dx * dx + dy * dy));
+      if (near > 0.0) rgb = mix(rgb, vec3(1.0, 0.45, 0.12), clamp(near * 0.35, 0.0, 0.6) * uHeatAlpha);
+    }
+  }
   fragColor = vec4(rgb, 1.0);
 }`;
 
@@ -79,6 +129,7 @@ export interface WindowSetting {
   invert?: boolean;
 }
 
+/** A second series fused over the first, the way PET is laid over CT. */
 export interface OverlaySetting {
   image: SliceImage;
   center: number;
@@ -89,6 +140,10 @@ export interface OverlaySetting {
   transform: [number, number, number, number];
 }
 
+export interface LesionOverlay {
+  id: string; slice: LesionSlice; heatRange: [number, number];
+  heat: boolean; contour: boolean; alpha: number;
+}
 interface PooledTexture {
   texture: WebGLTexture;
   rows: number;
@@ -96,7 +151,12 @@ interface PooledTexture {
   lastUsed: number;
 }
 
-const POOL_LIMIT = 24;
+/*
+ * Textures held on the GPU. A 512 x 512 R32F slice is 1 MiB, so ninety-six of
+ * them is 96 MiB -- nothing on any machine that can run this, and enough that
+ * scrolling half a study and coming back redraws entirely out of GPU memory.
+ */
+const POOL_LIMIT = 96;
 
 /** Screen pixels per image pixel past which a sample is individually visible. */
 export const PIXEL_INSPECT_SCALE = 4;
@@ -106,6 +166,7 @@ export class SliceRenderer {
   private program: WebGLProgram;
   private vao: WebGLVertexArrayObject;
   private uniforms: Record<string, WebGLUniformLocation | null> = {};
+  private masks = new Map<string, WebGLTexture>();
   private pool = new Map<string, PooledTexture>();
   private clock = 0;
   private linearFiltering: boolean;
@@ -127,6 +188,7 @@ export class SliceRenderer {
     this.linearFiltering = gl.getExtension("OES_texture_float_linear") !== null;
     this.program = this.link(VERTEX_SHADER, FRAGMENT_SHADER);
     for (const name of [
+      "uMask", "uHasMask", "uHeat", "uContour", "uMaskRect", "uHeatRange", "uHeatAlpha",
       "uRect", "uImage", "uCenter", "uWidth", "uInvert",
       "uOverlay", "uHasOverlay", "uOverlayXf", "uOverlayCenter", "uOverlayWidth", "uOverlayAlpha", "uOverlayFloor",
     ]) {
@@ -200,7 +262,10 @@ export class SliceRenderer {
     if (pixels instanceof Float32Array) return pixels;
     if (this.scratch.length < pixels.length) this.scratch = new Float32Array(pixels.length);
     const out = this.scratch;
-    for (let i = 0; i < pixels.length; i += 1) out[i] = pixels[i] as number;
+    // `set` on a typed array is a native widening copy. The obvious `for` loop
+    // that used to be here cost 1.07 ms per slice against 0.16 ms for this --
+    // a millisecond of main thread, every slice, for nothing.
+    out.set(pixels);
     return out.subarray(0, pixels.length);
   }
 
@@ -211,23 +276,35 @@ export class SliceRenderer {
       existing.lastUsed = ++this.clock;
       return existing;
     }
-    this.evict();
-    const texture = existing?.texture ?? gl.createTexture();
+    // Slices of one series all share a shape, so the texture object an evicted
+    // entry leaves behind can be refilled with `texSubImage2D` rather than
+    // reallocated. Scrolling a study then churns no GPU memory at all.
+    const recycled = existing ?? this.evict(image.rows, image.cols);
+    const texture = recycled?.texture ?? gl.createTexture();
     if (!texture) throw new Error("Could not allocate a texture");
     gl.bindTexture(gl.TEXTURE_2D, texture);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-    gl.texImage2D(
-      gl.TEXTURE_2D, 0, gl.R32F, image.cols, image.rows, 0, gl.RED, gl.FLOAT,
-      this.asFloat32(image.pixels),
-    );
+    const samePixels = recycled?.rows === image.rows && recycled?.cols === image.cols;
+    if (!samePixels) {
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      gl.texImage2D(
+        gl.TEXTURE_2D, 0, gl.R32F, image.cols, image.rows, 0, gl.RED, gl.FLOAT,
+        this.asFloat32(image.pixels),
+      );
+    } else {
+      gl.texSubImage2D(
+        gl.TEXTURE_2D, 0, 0, 0, image.cols, image.rows, gl.RED, gl.FLOAT,
+        this.asFloat32(image.pixels),
+      );
+    }
     const entry: PooledTexture = { texture, rows: image.rows, cols: image.cols, lastUsed: ++this.clock };
     this.pool.set(key, entry);
     return entry;
   }
 
-  private evict(): void {
-    if (this.pool.size < POOL_LIMIT) return;
+  /** Drop the least recently drawn texture, handing its object back for reuse. */
+  private evict(rows: number, cols: number): PooledTexture | null {
+    if (this.pool.size < POOL_LIMIT) return null;
     let oldestKey: string | null = null;
     let oldest = Infinity;
     for (const [key, entry] of this.pool) {
@@ -236,10 +313,14 @@ export class SliceRenderer {
         oldestKey = key;
       }
     }
-    if (oldestKey === null) return;
-    const victim = this.pool.get(oldestKey);
-    if (victim) this.gl.deleteTexture(victim.texture);
+    if (oldestKey === null) return null;
+    const victim = this.pool.get(oldestKey) ?? null;
     this.pool.delete(oldestKey);
+    if (victim && (victim.rows !== rows || victim.cols !== cols)) {
+      this.gl.deleteTexture(victim.texture);
+      return null;
+    }
+    return victim;
   }
 
   /** Textures are keyed by what uniquely identifies the pixels, not by slot. */
@@ -258,7 +339,13 @@ export class SliceRenderer {
   }
 
   // -- drawing ----------------------------------------------------------
-  draw(image: SliceImage, view: ViewState, window: WindowSetting, overlay?: OverlaySetting): void {
+  draw(
+    image: SliceImage,
+    view: ViewState,
+    window: WindowSetting,
+    overlay?: OverlaySetting,
+    lesion?: LesionOverlay,
+  ): void {
     if (this.disposed) return;
     const gl = this.gl;
     const canvas: CanvasSize = { width: this.canvas.clientWidth, height: this.canvas.clientHeight };
@@ -312,6 +399,35 @@ export class SliceRenderer {
       gl.uniform1i(this.uniforms.uHasOverlay ?? null, 0);
     }
 
+    gl.uniform1i(this.uniforms.uHasMask ?? null, lesion?.slice.mask ? 1 : 0);
+    if (lesion?.slice.mask) {
+      const slice = lesion.slice;
+      const key = `${lesion.id}|${image.plane}|${image.index}`;
+      gl.activeTexture(gl.TEXTURE2);
+      let texture = this.masks.get(key);
+      if (!texture) {
+        texture = gl.createTexture()!;
+        gl.bindTexture(gl.TEXTURE_2D, texture);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.R8, slice.col_max - slice.col_min + 1,
+          slice.row_max - slice.row_min + 1, 0, gl.RED, gl.UNSIGNED_BYTE, slice.mask!);
+        this.masks.set(key, texture);
+        if (this.masks.size > 96) {
+          const oldest = this.masks.keys().next().value!;
+          gl.deleteTexture(this.masks.get(oldest)!); this.masks.delete(oldest);
+        }
+      } else { gl.bindTexture(gl.TEXTURE_2D, texture); }
+      gl.uniform1i(this.uniforms.uMask ?? null, 2);
+      gl.uniform1i(this.uniforms.uHeat ?? null, lesion.heat ? 1 : 0);
+      gl.uniform1i(this.uniforms.uContour ?? null, lesion.contour ? 1 : 0);
+      gl.uniform2fv(this.uniforms.uHeatRange ?? null, lesion.heatRange);
+      gl.uniform1f(this.uniforms.uHeatAlpha ?? null, lesion.alpha);
+      gl.uniform4f(this.uniforms.uMaskRect ?? null, slice.col_min, slice.row_min,
+        slice.col_max - slice.col_min + 1, slice.row_max - slice.row_min + 1);
+    }
     gl.uniform4f(
       this.uniforms.uRect ?? null,
       (rect.x / canvas.width) * 2 - 1,
@@ -333,6 +449,8 @@ export class SliceRenderer {
     const gl = this.gl;
     for (const entry of this.pool.values()) gl.deleteTexture(entry.texture);
     this.pool.clear();
+    for (const texture of this.masks.values()) gl.deleteTexture(texture);
+    this.masks.clear();
     gl.deleteProgram(this.program);
     gl.deleteVertexArray(this.vao);
   }

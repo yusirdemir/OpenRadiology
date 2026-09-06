@@ -1,17 +1,23 @@
 /*
- * OpenRadiology desktop — visual system.
+ * OpenRadiology — the reading room.
  *
- * The room, not the dashboard. A reading room is dark so that the only bright
- * thing is the image; every surface here is desaturated and flush, with
- * hairlines instead of shadows, because a floating card implies a document and
- * this is an instrument. Amber is the single accent: it carries attention and
- * findings, the way a warning lamp does, and it is the colour a film viewbox
- * throws. Cool cyan is reserved for geometry the reader draws, green for
- * evidence that has been earned, red for what blocks a report.
+ * Design brief, in one paragraph. The person in front of this screen is often
+ * not a radiologist: it is someone who has been handed two scans of a person
+ * they love and wants to know whether things got better. So the interface is a
+ * dark reading room -- the only bright thing in it is the patient -- with the
+ * human sentences set in a serif, at a generous measure, the way a letter is
+ * set. Numbers are monospaced with tabular figures so a before and an after can
+ * be compared by eye. Chrome recedes into warm graphite, separated by hairlines
+ * and by space rather than by stacked cards and shadows.
  *
- * One rule overrides aesthetics: chrome may animate, pixels never. A fade or a
- * smooth transition applied to medical images would show the reader something
- * the scanner did not record.
+ * Colour carries exactly one meaning each, and the quiet ones are deliberately
+ * quiet: "unchanged" is the commonest verdict and must not shout. Amber is the
+ * single accent -- the colour a viewbox lamp throws -- and is spent only on the
+ * one thing the reader should do next.
+ *
+ * One rule overrides every aesthetic choice: chrome may animate, pixels never.
+ * A fade or a smooth transition applied to a medical image would show the
+ * reader something the scanner did not record.
  */
 
 @import "@fontsource-variable/ibm-plex-sans";
@@ -19,6 +25,7 @@
 @import "@fontsource/ibm-plex-mono/500.css";
 @import "@fontsource/ibm-plex-mono/600.css";
 @import "@fontsource/ibm-plex-serif/400.css";
+@import "@fontsource/ibm-plex-serif/500.css";
 @import "@fontsource/ibm-plex-serif/600.css";
 
 @import "tailwindcss";
@@ -29,48 +36,59 @@
   --font-serif: "IBM Plex Serif", ui-serif, Georgia, serif;
 
   /* Surfaces: near-black, warmed a few degrees so it does not read as void. */
-  --color-ink-950: #08090b;
-  --color-ink-900: #0c0e11;
-  --color-ink-850: #111318;
-  --color-ink-800: #171a20;
-  --color-ink-700: #1e222a;
-  --color-ink-600: #2a2f39;
-  --color-ink-500: #3a404c;
+  --color-ink-1000: #060709;
+  --color-ink-950: #0a0b0e;
+  --color-ink-900: #101216;
+  --color-ink-850: #15181e;
+  --color-ink-800: #1b1f26;
+  --color-ink-700: #232830;
+  --color-ink-600: #2f353f;
+  --color-ink-500: #3f4653;
 
-  --color-chalk-100: #eceae5;
-  --color-chalk-300: #b9bcc2;
-  --color-chalk-500: #868c96;
-  --color-chalk-600: #666c76;
+  /* Text: warm off-white, so long prose does not glare. */
+  --color-chalk-100: #ecebe7;
+  --color-chalk-200: #d2d3d3;
+  --color-chalk-400: #9ba1aa;
+  --color-chalk-600: #6b717b;
+  --color-chalk-700: #545a64;
 
-  /* Amber: attention, findings, the active instrument. */
+  /* Amber: the accent. The active instrument, the primary action. */
   --color-amber-400: #ffb454;
-  --color-amber-500: #f59f2c;
+  --color-amber-500: #f0a03a;
   --color-amber-900: #3a2a12;
 
-  /* Cyan: geometry the reader draws on top of the patient. */
-  --color-probe-300: #7dd3fc;
+  /* Verdicts. One meaning each; the common one is the quiet one. */
+  --color-good-400: #4fd6a0; /* iyileşti / küçüldü */
+  --color-good-900: #0e2a20;
+  --color-calm-400: #8fa3bb; /* değişmedi -- deliberately undramatic */
+  --color-calm-900: #1a2129;
+  --color-warn-400: #f5b942; /* belirsiz / yeni */
+  --color-warn-900: #33270d;
+  --color-alert-400: #ff6b6b; /* büyüdü */
+  --color-alert-900: #34191b;
+
+  /* The focus ring drawn on the image. "Look here", nothing more. */
+  --color-focus-500: #ff5f52;
+
+  /* Cool: geometry and addresses the reader can click. */
+  --color-probe-300: #8ed7fb;
   --color-probe-500: #38bdf8;
 
-  /* Green: evidence that exists. Red: what blocks a report. */
-  --color-attest-400: #4ade80;
-  --color-attest-900: #10291a;
-  --color-alarm-400: #f87171;
-  --color-alarm-900: #3a1717;
-  --color-caution-400: #fbbf24;
-
-  --radius-panel: 3px;
-  --radius-chip: 2px;
+  --radius-panel: 10px;
+  --radius-card: 8px;
+  --radius-chip: 5px;
 }
 
 @layer base {
-  * {
-    border-color: var(--hairline);
+  :root {
+    --hairline: rgb(255 255 255 / 0.065);
+    --hairline-strong: rgb(255 255 255 / 0.12);
+    --measure: 62ch;
+    color-scheme: dark;
   }
 
-  :root {
-    --hairline: rgb(255 255 255 / 0.07);
-    --hairline-strong: rgb(255 255 255 / 0.13);
-    color-scheme: dark;
+  * {
+    border-color: var(--hairline);
   }
 
   html,
@@ -85,15 +103,14 @@
     color: var(--color-chalk-100);
     font-family: var(--font-sans);
     font-size: 13px;
-    line-height: 1.45;
+    line-height: 1.5;
     -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
     overflow: hidden;
-    /* The application owns the window; nothing scrolls except panels. */
     overscroll-behavior: none;
     user-select: none;
     cursor: default;
   }
-
 
   ::selection {
     background: var(--color-amber-900);
@@ -101,23 +118,27 @@
   }
 
   ::-webkit-scrollbar {
-    width: 9px;
-    height: 9px;
+    width: 10px;
+    height: 10px;
   }
   ::-webkit-scrollbar-track {
     background: transparent;
   }
   ::-webkit-scrollbar-thumb {
-    background: var(--color-ink-600);
-    border-radius: 0;
+    background: var(--color-ink-700);
+    border-radius: 6px;
+    border: 2px solid transparent;
+    background-clip: content-box;
   }
   ::-webkit-scrollbar-thumb:hover {
-    background: var(--color-ink-500);
+    background: var(--color-ink-600);
+    background-clip: content-box;
   }
 
   :focus-visible {
-    outline: 1px solid var(--color-amber-400);
-    outline-offset: 1px;
+    outline: 2px solid var(--color-amber-400);
+    outline-offset: 2px;
+    border-radius: 3px;
   }
 
   input,
@@ -132,79 +153,83 @@
   textarea {
     user-select: text;
   }
+
+  h1,
+  h2,
+  h3,
+  p {
+    margin: 0;
+  }
 }
 
 @layer components {
-  /* ---- structural chrome ------------------------------------------- */
-  .panel {
+  /* ---- surfaces ------------------------------------------------------ */
+  .surface {
     background: var(--color-ink-900);
     border: 1px solid var(--hairline);
     border-radius: var(--radius-panel);
   }
 
-  .rail-label {
+  .surface-quiet {
+    background: color-mix(in srgb, var(--color-ink-900) 60%, transparent);
+    border: 1px solid var(--hairline);
+    border-radius: var(--radius-panel);
+  }
+
+  /* ---- type ----------------------------------------------------------- */
+  /* The serif is for sentences a human reads, never for chrome. */
+  .display {
+    font-family: var(--font-serif);
+    font-weight: 600;
+    letter-spacing: -0.015em;
+    line-height: 1.22;
+    color: var(--color-chalk-100);
+  }
+
+  .prose-human {
+    font-family: var(--font-serif);
+    font-size: 15px;
+    line-height: 1.68;
+    color: var(--color-chalk-200);
+    max-width: var(--measure);
+    user-select: text;
+  }
+
+  .eyebrow {
     font-size: 10px;
-    letter-spacing: 0.13em;
+    font-weight: 600;
+    letter-spacing: 0.14em;
     text-transform: uppercase;
     color: var(--color-chalk-600);
-    font-weight: 500;
   }
 
-  .hairline-t {
-    border-top: 1px solid var(--hairline);
-  }
-
-  /* ---- readouts ----------------------------------------------------- */
-  /* Addresses and numbers are monospaced with tabular figures so a column of
-     measurements can be compared by eye without re-reading each digit. */
+  /* Addresses and measurements: tabular so a column compares by eye. */
   .readout {
     font-family: var(--font-mono);
     font-variant-numeric: tabular-nums;
     font-feature-settings: "tnum" 1, "zero" 1;
-    letter-spacing: -0.01em;
+    letter-spacing: -0.015em;
   }
 
-  .chip {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.375rem;
-    padding: 0.1rem 0.4rem;
-    border: 1px solid var(--hairline-strong);
-    border-radius: var(--radius-chip);
-    background: var(--color-ink-850);
-    font-family: var(--font-mono);
-    font-size: 11px;
-    font-variant-numeric: tabular-nums;
-    color: var(--color-chalk-300);
-    white-space: nowrap;
-  }
-
-  .chip-address {
-    cursor: pointer;
-    transition: border-color 140ms ease-out, color 140ms ease-out, background 140ms ease-out;
-  }
-  .chip-address:hover {
-    border-color: var(--color-probe-500);
-    color: var(--color-probe-300);
-    background: color-mix(in srgb, var(--color-probe-500) 9%, var(--color-ink-850));
-  }
-
-  /* ---- controls ----------------------------------------------------- */
+  /* ---- controls -------------------------------------------------------- */
   .btn {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    gap: 0.4rem;
-    padding: 0.3rem 0.6rem;
+    gap: 0.45rem;
+    padding: 0.4rem 0.75rem;
     border: 1px solid var(--hairline-strong);
     border-radius: var(--radius-chip);
     background: var(--color-ink-800);
-    color: var(--color-chalk-300);
-    font-size: 12px;
+    color: var(--color-chalk-200);
+    font-size: 12.5px;
     font-weight: 500;
     cursor: pointer;
-    transition: background 130ms ease-out, color 130ms ease-out, border-color 130ms ease-out;
     white-space: nowrap;
+    transition:
+      background 130ms ease-out,
+      color 130ms ease-out,
+      border-color 130ms ease-out;
   }
   .btn:hover:not(:disabled) {
     background: var(--color-ink-700);
@@ -212,210 +237,251 @@
     border-color: var(--color-ink-500);
   }
   .btn:disabled {
-    opacity: 0.4;
+    opacity: 0.42;
     cursor: not-allowed;
   }
-  .btn-active {
-    background: color-mix(in srgb, var(--color-amber-400) 16%, var(--color-ink-800));
-    border-color: color-mix(in srgb, var(--color-amber-400) 55%, transparent);
+  .btn-ghost {
+    background: transparent;
+    border-color: transparent;
+    color: var(--color-chalk-400);
+  }
+  .btn-ghost:hover:not(:disabled) {
+    background: var(--color-ink-800);
+    border-color: var(--hairline);
+    color: var(--color-chalk-100);
+  }
+  .btn-on {
+    background: color-mix(in srgb, var(--color-amber-400) 15%, var(--color-ink-800));
+    border-color: color-mix(in srgb, var(--color-amber-400) 50%, transparent);
+    color: var(--color-amber-400);
+  }
+  .btn-on:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--color-amber-400) 22%, var(--color-ink-800));
+    border-color: color-mix(in srgb, var(--color-amber-400) 65%, transparent);
     color: var(--color-amber-400);
   }
   .btn-primary {
     background: var(--color-amber-400);
     border-color: var(--color-amber-400);
-    color: var(--color-ink-950);
+    color: var(--color-ink-1000);
     font-weight: 600;
   }
   .btn-primary:hover:not(:disabled) {
     background: var(--color-amber-500);
     border-color: var(--color-amber-500);
-    color: var(--color-ink-950);
+    color: var(--color-ink-1000);
+  }
+  .btn-lg {
+    padding: 0.6rem 1.05rem;
+    font-size: 13.5px;
   }
 
   .field {
     width: 100%;
-    padding: 0.3rem 0.5rem;
+    padding: 0.4rem 0.6rem;
     background: var(--color-ink-950);
     border: 1px solid var(--hairline-strong);
     border-radius: var(--radius-chip);
     color: var(--color-chalk-100);
-    font-size: 12px;
+    font-size: 12.5px;
   }
   .field:focus {
     outline: none;
     border-color: var(--color-amber-400);
   }
 
-  /* ---- the spectrometer rail --------------------------------------- */
-  /* Eighteen anatomical regions as ticks. Coverage is legible in one glance
-     without reading a single label. */
-  .tick {
-    width: 3px;
-    border-radius: 1px;
-    background: var(--color-ink-600);
-    transition: background 160ms ease-out;
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.11rem 0.45rem;
+    border: 1px solid var(--hairline-strong);
+    border-radius: var(--radius-chip);
+    background: var(--color-ink-850);
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+    color: var(--color-chalk-400);
+    white-space: nowrap;
   }
-  .tick-finding {
-    background: var(--color-amber-400);
+  .chip-link {
+    cursor: pointer;
+    transition:
+      border-color 130ms ease-out,
+      color 130ms ease-out,
+      background 130ms ease-out;
   }
-  .tick-no_finding {
-    background: var(--color-attest-400);
-  }
-  .tick-limited {
-    background: var(--color-caution-400);
-  }
-  .tick-not_covered {
-    background: var(--color-alarm-400);
-  }
-  .tick-pending {
-    background: var(--color-ink-600);
+  .chip-link:hover {
+    border-color: var(--color-probe-500);
+    color: var(--color-probe-300);
+    background: color-mix(in srgb, var(--color-probe-500) 10%, var(--color-ink-850));
   }
 
-  .region-row {
-    display: grid;
-    grid-template-columns: 3px 1fr auto;
-    gap: 0.5rem;
+  /* ---- verdict badge --------------------------------------------------- */
+  /* One badge, five colours, no icons required to read it. */
+  .verdict {
+    display: inline-flex;
     align-items: center;
-    padding: 0.25rem 0.5rem 0.25rem 0.375rem;
-    cursor: pointer;
-    border-left: 2px solid transparent;
-    transition: background 120ms ease-out;
+    gap: 0.3rem;
+    padding: 0.1rem 0.45rem 0.14rem;
+    border-radius: 999px;
+    border: 1px solid;
+    font-size: 10.5px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    white-space: nowrap;
   }
-  .region-row:hover {
+  .verdict-good {
+    color: var(--color-good-400);
+    background: var(--color-good-900);
+    border-color: color-mix(in srgb, var(--color-good-400) 34%, transparent);
+  }
+  .verdict-calm {
+    color: var(--color-calm-400);
+    background: var(--color-calm-900);
+    border-color: color-mix(in srgb, var(--color-calm-400) 26%, transparent);
+  }
+  .verdict-warn {
+    color: var(--color-warn-400);
+    background: var(--color-warn-900);
+    border-color: color-mix(in srgb, var(--color-warn-400) 34%, transparent);
+  }
+  .verdict-alert {
+    color: var(--color-alert-400);
+    background: var(--color-alert-900);
+    border-color: color-mix(in srgb, var(--color-alert-400) 38%, transparent);
+  }
+
+  /* ---- the findings rail ------------------------------------------------ */
+  .finding-row {
+    position: relative;
+    display: block;
+    width: 100%;
+    padding: 0.7rem 0.85rem 0.75rem 1rem;
+    text-align: left;
+    cursor: pointer;
+    border-radius: var(--radius-card);
+    border: 1px solid transparent;
+    transition:
+      background 130ms ease-out,
+      border-color 130ms ease-out;
+  }
+  .finding-row::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 0.7rem;
+    bottom: 0.7rem;
+    width: 2px;
+    border-radius: 2px;
+    background: transparent;
+    transition: background 130ms ease-out;
+  }
+  .finding-row:hover {
     background: var(--color-ink-850);
   }
-  .region-row[data-active="true"] {
-    background: var(--color-ink-800);
-    border-left-color: var(--color-amber-400);
+  .finding-row[data-active="true"] {
+    background: var(--color-ink-850);
+    border-color: var(--hairline-strong);
+  }
+  .finding-row[data-active="true"]::before {
+    background: var(--color-focus-500);
   }
 
-  /* ---- status text -------------------------------------------------- */
-  .status-finding {
-    color: var(--color-amber-400);
-  }
-  .status-no_finding {
-    color: var(--color-attest-400);
-  }
-  .status-limited {
-    color: var(--color-caution-400);
-  }
-  .status-not_covered {
-    color: var(--color-alarm-400);
-  }
-  .status-pending {
-    color: var(--color-chalk-600);
-  }
-
-  /* ---- report typography -------------------------------------------- */
-  /* The report is a document, not chrome: it gets a serif and a measure. */
+  /* ---- report typography ------------------------------------------------ */
   .prose-report {
     font-family: var(--font-serif);
-    font-size: 14px;
-    line-height: 1.7;
-    color: var(--color-chalk-100);
-    max-width: 68ch;
+    font-size: 14.5px;
+    line-height: 1.72;
+    color: var(--color-chalk-200);
+    max-width: 70ch;
     user-select: text;
   }
   .prose-report h1,
   .prose-report h2,
   .prose-report h3 {
-    font-family: var(--font-sans);
+    font-family: var(--font-serif);
     font-weight: 600;
-    letter-spacing: -0.01em;
+    letter-spacing: -0.015em;
     color: var(--color-chalk-100);
   }
   .prose-report h1 {
-    font-size: 20px;
-    margin: 1.4em 0 0.5em;
+    font-size: 25px;
+    margin: 1.5em 0 0.55em;
+    line-height: 1.25;
   }
   .prose-report h2 {
-    font-size: 16px;
-    margin: 1.6em 0 0.4em;
-    padding-bottom: 0.3em;
+    font-size: 18px;
+    margin: 1.9em 0 0.5em;
+    padding-bottom: 0.35em;
     border-bottom: 1px solid var(--hairline);
   }
   .prose-report h3 {
-    font-size: 13px;
-    margin: 1.2em 0 0.3em;
-    color: var(--color-chalk-300);
+    font-size: 14.5px;
+    margin: 1.4em 0 0.35em;
+    color: var(--color-chalk-100);
   }
   .prose-report p {
-    margin: 0.7em 0;
+    margin: 0.75em 0;
   }
   .prose-report ul,
   .prose-report ol {
-    margin: 0.7em 0;
-    padding-left: 1.3em;
+    margin: 0.75em 0;
+    padding-left: 1.35em;
   }
   .prose-report li {
-    margin: 0.25em 0;
+    margin: 0.3em 0;
   }
   .prose-report code {
     font-family: var(--font-mono);
-    font-size: 0.85em;
+    font-size: 0.84em;
     color: var(--color-probe-300);
   }
   .prose-report table {
     border-collapse: collapse;
     font-family: var(--font-sans);
-    font-size: 12px;
-    margin: 1em 0;
+    font-size: 12.5px;
+    margin: 1.1em 0;
   }
   .prose-report th,
   .prose-report td {
     border: 1px solid var(--hairline);
-    padding: 0.3em 0.6em;
+    padding: 0.35em 0.65em;
     text-align: left;
   }
   .prose-report th {
     background: var(--color-ink-850);
     font-weight: 600;
+    color: var(--color-chalk-100);
   }
   .prose-report strong {
-    color: var(--color-amber-400);
+    color: var(--color-chalk-100);
     font-weight: 600;
   }
   .prose-report blockquote {
-    margin: 0.8em 0;
-    padding-left: 0.9em;
+    margin: 0.9em 0;
+    padding-left: 1em;
     border-left: 2px solid var(--color-ink-600);
-    color: var(--color-chalk-300);
+    color: var(--color-chalk-400);
   }
 }
 
 @layer utilities {
-  /*
-   * Texture belongs to the furniture, never to the patient.
-   *
-   * An earlier draft laid a fixed grain layer over the whole window, which put
-   * noise on top of the rendered slices -- exactly the thing a medical viewer
-   * must not do, since a reader cannot tell borrowed texture from parenchyma.
-   * Grain is now opt-in per chrome surface and the viewer never asks for it.
-   */
-  .chrome-grain {
-    position: relative;
-  }
-  .chrome-grain::after {
-    content: "";
-    position: absolute;
-    inset: 0;
-    z-index: 0;
-    pointer-events: none;
-    opacity: 0.03;
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3'/%3E%3C/filter%3E%3Crect width='120' height='120' filter='url(%23n)'/%3E%3C/svg%3E");
-  }
-
   .scroll-y {
     overflow-y: auto;
     overflow-x: hidden;
   }
 
-  /* Reveal the interface once, on load. Findings never animate in; only the
-     furniture does. */
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+
+  /* One orchestrated reveal on load. Findings never animate in; furniture does. */
   @keyframes rise {
     from {
       opacity: 0;
-      transform: translateY(4px);
+      transform: translateY(6px);
     }
     to {
       opacity: 1;
@@ -423,25 +489,137 @@
     }
   }
   .rise {
-    animation: rise 260ms cubic-bezier(0.2, 0.7, 0.3, 1) both;
+    animation: rise 320ms cubic-bezier(0.2, 0.7, 0.3, 1) both;
   }
 
-  @keyframes pulse-ring {
-    0%, 100% {
-      opacity: 0.55;
+  @keyframes fade-in {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+  .fade-in {
+    animation: fade-in 200ms ease-out both;
+  }
+
+  @keyframes breathe {
+    0%,
+    100% {
+      opacity: 0.5;
     }
     50% {
       opacity: 1;
     }
   }
-  .pulse-ring {
-    animation: pulse-ring 1.8s ease-in-out infinite;
+  .breathe {
+    animation: breathe 1.9s ease-in-out infinite;
+  }
+
+  @keyframes spin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+  .spin {
+    animation: spin 780ms linear infinite;
+  }
+
+  /* Skeleton: a shape where content will be, never a blank screen. */
+  @keyframes shimmer {
+    0% {
+      background-position: -200% 0;
+    }
+    100% {
+      background-position: 200% 0;
+    }
+  }
+  .skeleton {
+    background-image: linear-gradient(
+      90deg,
+      var(--color-ink-850) 0%,
+      var(--color-ink-800) 40%,
+      var(--color-ink-850) 80%
+    );
+    background-size: 200% 100%;
+    animation: shimmer 1.5s ease-in-out infinite;
+    border-radius: 4px;
   }
 
   @media (prefers-reduced-motion: reduce) {
     .rise,
-    .pulse-ring {
+    .fade-in,
+    .breathe,
+    .spin,
+    .skeleton {
       animation: none;
     }
+  }
+}
+
+/*
+ * Paper.
+ *
+ * A radiology report is a document people print, sign and hand over, so the
+ * report sheet has to leave the reading room behind: white ground, black type,
+ * no chrome, and the rest of the application out of the way entirely.
+ */
+@media print {
+  html,
+  body,
+  #root {
+    height: auto;
+    overflow: visible;
+    background: #fff;
+  }
+
+  body * {
+    visibility: hidden;
+  }
+
+  .report-sheet,
+  .report-sheet * {
+    visibility: visible;
+  }
+
+  .report-sheet {
+    position: absolute;
+    inset: 0;
+    max-width: none !important;
+    width: 100% !important;
+    height: auto !important;
+    border: 0 !important;
+    box-shadow: none !important;
+    background: #fff !important;
+    color: #111 !important;
+  }
+
+  /* The sheet's own header is interface, not document. */
+  .report-sheet > header,
+  .report-sheet button {
+    display: none !important;
+  }
+
+  .report-sheet .scroll-y {
+    overflow: visible !important;
+  }
+
+  .report,
+  .report * {
+    color: #111 !important;
+    border-color: #ccc !important;
+  }
+
+  .report .display {
+    color: #000 !important;
+  }
+
+  .report h2 {
+    color: #444 !important;
+  }
+
+  .report section {
+    break-inside: avoid;
   }
 }

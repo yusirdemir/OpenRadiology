@@ -54,6 +54,8 @@ export interface SeriesMeta {
     series_number: string;
     series_uid: string;
     study_uid: string;
+    frame_uid?: string;
+    origin_lps?: [number,number,number];
     shape_zyx: [number, number, number];
     pixel_spacing_mm: [number, number];
     slice_spacing_mm: number;
@@ -109,6 +111,7 @@ export interface Measurement {
   sha256: string;
   ref: Ref;
   tool_output?: string;
+  points?: { row: number; col: number }[];
 }
 
 export interface PatientExplanation {
@@ -279,6 +282,113 @@ export interface ViewEventPayload {
   window_width: number;
   source?: "viewer" | "page";
   page_path?: string;
+}
+
+/** One saved review, as the library lists it. Summarised by the sidecar. */
+export interface SessionCard {
+  path: string;
+  modified: number;
+  mode: "single" | "comparison";
+  language: string;
+  reader: string;
+  reading_complete: boolean;
+  finalized: boolean;
+  report_file: string;
+  guide_file: string;
+  studies: {
+    uid: string;
+    path: string;
+    folder: string;
+    date: string;
+    time: string;
+    modalities: string[];
+    series: number;
+  }[];
+  claims: number;
+  verdicts: Record<string, number>;
+  comparison_status: string;
+  patient_context: string;
+}
+
+export type LesionProfile = "auto" | "solid" | "effusion" | "bulla" | "cyst";
+export type Voxel = [number, number, number];
+export interface LesionSlice {
+  index: number;
+  row: number;
+  col: number;
+  row_min: number;
+  row_max: number;
+  col_min: number;
+  col_max: number;
+  pixels: number;
+  /** Twice the deepest inscribed radius on this slice: the thickness of a layer. */
+  thickness_mm?: number;
+  diameter_mm: number;
+  caliper: [{ row: number; col: number }, { row: number; col: number }] | null;
+  measurement_method: string;
+  runs: number[];
+  /** Pleural tangent closures bounding this axial slice: P1-P2 wall arcs. */
+  closure?: PleuralClosure[];
+  /** Worker-prepared, cropped native-grid label image. Never linearly filtered. */
+  mask?: Uint8Array;
+}
+/** One closed gap in the pleural line: tangent points and the fitted wall arc (native pixel centres). */
+export interface PleuralClosure {
+  index: number;
+  p1: [number, number];
+  p2: [number, number];
+  arc: [number, number][];
+  chord_mm: number;
+  bulge_mm: number;
+  flank_points: number;
+}
+export interface LesionSegmentation {
+  version: string;
+  id: string;
+  series_uid: string;
+  status: "draft" | "needs-review";
+  reasons: string[];
+  seed: { index: number; row: number; col: number };
+  seed_hu: number;
+  band: [number, number];
+  tissue: LesionProfile;
+  frame_uid: string;
+  native_origin_lps: Voxel;
+  mask_origin_lps: Voxel;
+  focus_zyx: Voxel;
+  centroid_lps: Voxel;
+  shape_zyx: Voxel;
+  spacing_zyx: Voxel;
+  mask_origin_zyx: Voxel;
+  mask_shape_zyx: Voxel;
+  mask3d?: Uint8Array;
+  hu_data: string;
+  hu3d?: Float32Array;
+  rgba3d?: Uint8Array;
+  planes: Record<PlaneName, LesionSlice[]>;
+  voxels: number;
+  volume_ml: number;
+  craniocaudal_mm: number;
+  established: boolean;
+  reason: string;
+  extent: [number, number];
+  slices: LesionSlice[];
+  heat_range: [number, number];
+  pleural_closure: { active: boolean; radius_mm: number | null; flank_mm: number | null; method: string; slices: PleuralClosure[] };
+  quality: { converged: boolean; iterations: number; weak_boundary_fraction: number; crop_contact_voxels: number; automatic_partition: boolean; pruned_voxels: number; prune_calibre_mm: number };
+  provenance: { positive_zyx: Voxel[]; negative_zyx: Voxel[]; brush_mm: number; native_grid: boolean; sigma_mm: number };
+  elapsed_ms: number;
+}
+export interface VolumePreview {
+  shape_zyx: Voxel;
+  native_shape_zyx: Voxel;
+  spacing_zyx: Voxel;
+  data: string;
+  dtype: "int16-le";
+  series_uid: string;
+  sampling: string;
+  origin_lps: Voxel;
+  frame_uid: string;
 }
 
 /** The engine's own locale bundle: region names and report headings. */
