@@ -274,6 +274,20 @@ class Server:
             server_version = "openrad-server"
             sys_version = ""
 
+            # Headers and body leave in one write, with Nagle off.
+            #
+            # The default handler is unbuffered, so every response is at least
+            # two `sendall` calls: a few hundred bytes of header, then the body.
+            # That is the write-write-read pattern that Nagle and delayed
+            # acknowledgement combine to punish -- the body waits for an ACK of
+            # the header that the peer is in no hurry to send. On a machine
+            # where that timer is long it cost about two hundred milliseconds
+            # per response, which is most of a second on every image. Buffering
+            # the response into a single segment removes the interaction
+            # entirely.
+            wbufsize = 64 * 1024
+            disable_nagle_algorithm = True
+
             def log_message(self, fmt: str, *args: Any) -> None:  # noqa: A003
                 log.debug("%s - %s", self.address_string(), fmt % args)
 
@@ -294,18 +308,67 @@ class Server:
                 if not origin or not server._origin_ok(origin):
                     return {}
                 return {"Access-Control-Allow-Origin": origin,
-                        "Access-Control-Allow-Headers": "Authorization, Content-Type, X-Openrad-Token",
+                        "Access-Control-Allow-Headers": "Authorization, Content-Type, Range, X-Openrad-Token",
                         "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
-                        "Access-Control-Expose-Headers": ("X-Sop-Uid, X-Z-Mm, X-Mm-Per-Px, X-Shape, X-Dtype, "
+                        "Access-Control-Expose-Headers": ("Accept-Ranges, Content-Range, "
+                                                          "X-Sop-Uid, X-Z-Mm, X-Mm-Per-Px, X-Shape, X-Dtype, "
                                                           "X-Instance, X-Index, X-Series-Uid, X-Study-Uid, X-Plane"),
                         "Access-Control-Max-Age": "600"}
+
+            def _byte_range(self, total: int) -> Optional[Tuple[int, int]]:
+                """Parse a single ``Range: bytes=a-b``, or ``None`` to send it whole.
+
+                Only the one-range form is honoured, which is all a viewer asks
+                for. Anything malformed, unsatisfiable or multi-range falls back
+                to the full body: a partial response nobody asked for is worse
+                than a large one.
+                """
+                raw = (self.headers.get("Range") or "").strip()
+                match = re.fullmatch(r"bytes=(\d*)-(\d*)", raw)
+                if not match or total <= 0:
+                    return None
+                first, last = match.group(1), match.group(2)
+                if not first and not last:
+                    return None
+                if not first:  # a suffix range: the final N bytes
+                    length = int(last)
+                    if length <= 0:
+                        return None
+                    return max(0, total - length), total - 1
+                start = int(first)
+                if start >= total:
+                    return None
+                end = min(int(last), total - 1) if last else total - 1
+                return (start, end) if end >= start else None
 
             def _emit(self, response: Response, origin: str, head_only: bool = False) -> None:
                 cors = self._cors(origin)
                 body = response.body
                 streaming = not isinstance(body, bytes)
-                self.send_response(response.status)
-                for key, value in list(response.headers.items()) + list(cors.items()):
+                status = response.status
+                extra: Dict[str, str] = {}
+
+                # Byte ranges on binary bodies.
+                #
+                # This exists for a measured reason rather than for
+                # completeness. On some machines a loopback write larger than
+                # one 16 KiB segment stalls for roughly 230 ms per block, so a
+                # half-megabyte slice takes nearly four seconds while the same
+                # bytes moved in fourteen-kilobyte request/response turns take
+                # under two milliseconds. Serving ranges lets a viewer ask for a
+                # slice in pieces small enough to stay under that cliff, and
+                # costs nothing on a machine that does not have it.
+                if not streaming and status == 200:
+                    extra["Accept-Ranges"] = "bytes"
+                    span = self._byte_range(len(body))
+                    if span is not None:
+                        start, end = span
+                        extra["Content-Range"] = f"bytes {start}-{end}/{len(body)}"
+                        body = body[start : end + 1]
+                        status = 206
+
+                self.send_response(status)
+                for key, value in list(response.headers.items()) + list(cors.items()) + list(extra.items()):
                     self.send_header(key, value)
                 if streaming:
                     self.send_header("Transfer-Encoding", "chunked")
@@ -322,6 +385,7 @@ class Server:
                         self.wfile.write(b"0\r\n\r\n")
                     else:
                         self.wfile.write(body)
+                        self.wfile.flush()
                 except (BrokenPipeError, ConnectionResetError, socket.timeout):
                     log.debug("client disconnected during response")
 

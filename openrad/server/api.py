@@ -24,7 +24,7 @@ import math
 import os
 import threading
 import time
-from collections import deque
+from collections import OrderedDict, deque
 from pathlib import Path
 from typing import Any, Deque, Dict, Iterator, List, Optional, Sequence, Tuple
 
@@ -69,6 +69,8 @@ class AppState:
         self.headers = HeaderCache()
         self.volumes = VolumeCache(self.headers, budget_bytes or _default_budget())
         self.jobs = JobManager()
+        from .segmentation import SegmentationService
+        self.segmentation = SegmentationService()
         self.policy = policy or DwellPolicy()
         self.started = time.time()
         self._ledgers: Dict[str, AttestationLedger] = {}
@@ -78,6 +80,8 @@ class AppState:
         self.transcript = Transcript()
         self._mcp: Any = None
         self._mcp_lock = threading.Lock()
+        self._slices: "OrderedDict[Tuple[Any, ...], Tuple[bytes, Dict[str, str]]]" = OrderedDict()
+        self._slices_lock = threading.Lock()
         for candidate in (getattr(self.settings, "studies_root", None), Path.cwd()):
             if candidate:
                 self.allow(Path(candidate))
@@ -115,7 +119,38 @@ class AppState:
     def ledger_for_session(self, session_path: Path) -> Tuple[Dict[str, Any], AttestationLedger]:
         session = load_session(session_path)
         work_dir = Path(session.get("work_dir") or session_path.parent)
+        self.allow(work_dir)
+        if session.get("studies_root"):
+            self.allow(Path(session["studies_root"]))
+        for st in session.get("studies", []):
+            if st.get("path"):
+                self.allow(Path(st["path"]))
         return session, self.ledger_for(work_dir)
+
+    # -- rendered slices ---------------------------------------------------
+    def slice_payload(self, key: Tuple[Any, ...],
+                      build: Any) -> Tuple[bytes, Dict[str, str]]:
+        """One encoded image, remembered just long enough to be asked for twice.
+
+        A viewer on a machine whose loopback stalls above sixteen kilobytes
+        fetches a slice as forty-three byte ranges. Without this the route
+        would resolve the series against a thousand headers and re-encode half
+        a megabyte forty-three times to serve the same image; with it, only the
+        first range does any work. Eight slices is four megabytes, which is
+        nothing beside the decoded volumes already resident.
+        """
+        with self._slices_lock:
+            hit = self._slices.get(key)
+            if hit is not None:
+                self._slices.move_to_end(key)
+                return hit
+        value = build()
+        with self._slices_lock:
+            self._slices[key] = value
+            self._slices.move_to_end(key)
+            while len(self._slices) > 8:
+                self._slices.popitem(last=False)
+        return value
 
     # -- agent bridge ------------------------------------------------------
     @property
@@ -136,6 +171,7 @@ class AppState:
 
     def shutdown(self) -> None:
         self.jobs.shutdown()
+        self.segmentation.shutdown()
         self.volumes.clear()
 
 
@@ -173,7 +209,12 @@ def _volume(state: AppState, payload: Dict[str, Any]):
 
 
 def _session_path(state: AppState, value: Any) -> Path:
-    path = state.ensure_allowed(value, "session file")
+    if not value:
+        raise UsageError("A session file is required")
+    candidate = Path(str(value)).expanduser().resolve()
+    if candidate.is_file() and candidate.name.endswith(".json"):
+        state.allow(candidate.parent)
+    path = state.ensure_allowed(candidate, "session file")
     if not path.is_file():
         raise InputError(f"Session file not found: {path}")
     return path
@@ -321,32 +362,59 @@ def build_router(state: AppState) -> Router:
 
     @route("GET", "/series/slice")
     def series_slice(request: Request) -> Response:
-        payload = {"study": request.q("study"), "series": request.q("series"),
-                   "allow_tilt": request.q_bool("allow_tilt")}
-        volume = _volume(state, payload)
+        study = state.ensure_allowed(request.q("study"), "study folder")
+        series = request.q("series")
+        if not series:
+            raise UsageError("A series number or SeriesInstanceUID is required")
         plane = (request.q("plane") or "ax").lower()
         index = request.q_int("index", 0) or 0
-        array, meta = extract_plane(volume, plane, index,
-                                    mip_mm=request.q_float("mip", 0.0) or 0.0,
-                                    thick_px=request.q_int("thick", 1) or 1)
-        payload, dtype = encode_image(volume, array)
-        headers = {
-            "X-Shape": f"{meta['shape'][0]},{meta['shape'][1]}",
-            "X-Dtype": dtype,
-            "X-Mm-Per-Px": ",".join(f"{v:.6f}" for v in meta["mm_per_px"]),
-            "X-Plane": meta["plane"],
-            "X-Index": str(meta["index"]),
-            "X-Count": str(meta["count"]),
-            "X-Sop-Uid": meta["sop_uid"],
-            "X-Instance": meta["instance"],
-            "X-Series-Uid": meta["series_uid"],
-            "X-Study-Uid": meta["study_uid"],
-            "X-Mip-Mm": str(meta["mip_mm"]),
-            "Cache-Control": "no-store",
-        }
-        if meta["z_mm"] is not None:
-            headers["X-Z-Mm"] = f"{meta['z_mm']:.4f}"
+        mip = request.q_float("mip", 0.0) or 0.0
+        thick = request.q_int("thick", 1) or 1
+        allow_tilt = request.q_bool("allow_tilt")
+
+        def build() -> Tuple[bytes, Dict[str, str]]:
+            volume = _volume(state, {"study": str(study), "series": series, "allow_tilt": allow_tilt})
+            array, meta = extract_plane(volume, plane, index, mip_mm=mip, thick_px=thick)
+            body, dtype = encode_image(volume, array)
+            headers = {
+                "X-Shape": f"{meta['shape'][0]},{meta['shape'][1]}",
+                "X-Dtype": dtype,
+                "X-Mm-Per-Px": ",".join(f"{v:.6f}" for v in meta["mm_per_px"]),
+                "X-Plane": meta["plane"],
+                "X-Index": str(meta["index"]),
+                "X-Count": str(meta["count"]),
+                "X-Sop-Uid": meta["sop_uid"],
+                "X-Instance": meta["instance"],
+                "X-Series-Uid": meta["series_uid"],
+                "X-Study-Uid": meta["study_uid"],
+                "X-Mip-Mm": str(meta["mip_mm"]),
+                "Cache-Control": "no-store",
+            }
+            if meta["z_mm"] is not None:
+                headers["X-Z-Mm"] = f"{meta['z_mm']:.4f}"
+            return body, headers
+
+        payload, headers = state.slice_payload(
+            (str(study), series, plane, index, mip, thick, allow_tilt), build
+        )
         return binary_response(payload, "application/octet-stream", headers)
+
+    @route("POST", "/series/lesion")
+    def series_lesion(request: Request) -> Response:
+        payload = request.json()
+        volume = _volume(state, payload)
+        return json_response(state.segmentation.run(volume, payload))
+
+    @route("POST", "/series/volume")
+    def series_volume(request: Request) -> Response:
+        from .segmentation import volume_preview
+        payload = request.json()
+        volume = _volume(state, payload)
+        body, _ = state.slice_payload(
+            ("volume-preview", id(volume), volume.series_uid),
+            lambda: (json.dumps(volume_preview(volume)).encode("utf-8"), {}),
+        )
+        return Response(200, {"Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store"}, body)
 
     @route("GET", "/series/atlas")
     def series_atlas(request: Request) -> Response:
