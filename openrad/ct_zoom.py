@@ -20,6 +20,7 @@ import sys
 from pathlib import Path
 from typing import List, Optional, Sequence
 
+import numpy as np
 from PIL import Image, ImageDraw
 
 from .dcmlib import WINDOWS, Volume, font, orientation_marks, series_by_number, window
@@ -97,6 +98,7 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--stride", type=int, default=1, help="slice stride for context")
     ap.add_argument("--grid", type=int, default=20, help="grid spacing in native px (0=off)")
     ap.add_argument("--output", type=Path, required=True)
+    ap.add_argument("--pct", default="0.5,99.5", help="MR only: percentile window lo,hi over the whole series (default 0.5,99.5)")
     ap.add_argument("--plane", default="ax", choices=["ax", "cor", "sag"])
     ap.add_argument("--allow-tilt", action="store_true", help="accept gantry-tilted stacks (axial zoom only)")
     return ap
@@ -107,7 +109,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     if a.size < 2 or a.scale < 1 or a.context < 0 or a.stride < 1 or a.grid < 0:
         raise UsageError("Invalid zoom parameters")
     v = Volume(series_by_number(a.study_dir, a.series), allow_tilt=a.allow_tilt)
-    v.require_axial()
+    if a.plane != "ax":
+        v.require_axial()          # reformats need the canonical LPS stack; an in-plane crop does not
     if a.instance is not None:
         k0 = v.index_of_instance(a.instance)
     elif a.z is not None:
@@ -123,13 +126,22 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     h = a.size // 2
     r0, r1 = max(0, r - h), min(v.vol.shape[1], r + h)
     c0, c1 = max(0, c - h), min(v.vol.shape[2], c + h)
-    if a.window in WINDOWS:
+    if a.window in WINDOWS and v.modality != "MR":
         cen, wid = WINDOWS[a.window]
+    elif a.window in WINDOWS or a.window == "auto":
+        # MR signal is not HU: window the whole series once by percentiles (as mr-render does),
+        # so a zoom never invents contrast that the systematic sheets did not show.
+        try:
+            plo, phi = [float(x) for x in a.pct.split(",")]
+        except ValueError as e:
+            raise UsageError("--pct must be lo,hi") from e
+        lo, hi = np.percentile(v.vol, [plo, phi])
+        cen, wid = float((lo + hi) / 2), float(max(hi - lo, 1.0))
     else:
         try:
             cen, wid = [float(x) for x in a.window.split(",")]
         except ValueError as e:
-            raise UsageError("--window must be a preset name or 'center,width'") from e
+            raise UsageError("--window must be a preset name, 'auto' or 'center,width'") from e
     if a.plane != "ax":
         return mpr_zoom(v, a, k0, r, c, h, cen, wid)
     ks = [k for k in range(k0 - a.context * a.stride, k0 + a.context * a.stride + 1, a.stride) if 0 <= k < len(v.z)][::-1]

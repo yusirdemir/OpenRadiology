@@ -141,10 +141,16 @@ documented value; never guess.
 
 Brain MRI:
 ```bash
-openrad mr-render <folder> --step 1 --output <work_dir>/mr
-openrad mr-render <folder> --pair <T1pre> <T1post> --step 1 --output <work_dir>/mr_pair
+openrad mr-render <folder> --series <T1post_ax> --step 1 --tile 478 --grid 3x3 --output <work_dir>/t1post
+openrad mr-render <folder> --series <FLAIR_ax> --step 1 --grid 3x3 --output <work_dir>/flair
+openrad mr-render <folder> --series <T2> <DWI> <ADC> <SWI> <SWI_minIP> <T1pre_ax> --step 1 --grid auto --output <work_dir>/mr
+openrad mr-render <folder> --pair <T1pre> <T1post> --step 1 --output <work_dir>/mr_pair    # only for a candidate
 ```
-`required_passes` → `["mr:native"]` per read series.
+`required_passes` → `["mr:native"]` per read series. Read 3D T1/FLAIR on their axial reformat series
+(every slice) and mark the native sagittal volume `excluded` with that reason; upscale a small-matrix
+post-contrast T1 (`--tile 478`) because 2–3 mm enhancing foci are invisible at 239 px. `zoom` works on
+oblique MR axially (percentile window); reformat zooms need the canonical grid. Measured cost: a full
+seven-sequence protocol is ~70 sheets.
 
 Gantry-tilted head CT (exit 4 with "Gantry-tilted"): re-run with `--allow-tilt`; state in technique
 that reformats were de-sheared and 3D extents were not measured.

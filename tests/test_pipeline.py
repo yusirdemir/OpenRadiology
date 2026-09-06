@@ -673,6 +673,20 @@ class CliTests(TempCase):
         rc, out, err = quiet(cli_main, ["inventory", str(p), "--output", str(self.root / "inv2"), "--json", "--no-redact"])
         self.assertEqual(json.loads(out)["study"]["AccessionNumber"], "ACC999")
 
+    def test_zoom_accepts_oblique_mr_for_axial_crops_only(self):
+        # An MR axial reformat is rarely on the canonical LPS grid; an in-plane crop needs no reformat.
+        def mr(ds):
+            ds.Modality = "MR"
+        p = make_study(self.root, "a", gaps=tuple(range(6)), iop=(0.9998, 0, 0.02, 0, 1, 0), extra=mr)
+        out = self.root / "z_ax.png"
+        rc, o, err = quiet(cli_main, ["zoom", str(p), "--series", "1", "--instance", "3", "--center", "13,15", "--size", "16",
+                                      "--scale", "2", "--context", "1", "--output", str(out)])
+        self.assertEqual(rc, 0, err)
+        self.assertTrue(out.exists())
+        rc, o, err = quiet(cli_main, ["zoom", str(p), "--series", "1", "--instance", "3", "--center", "13,15", "--size", "16",
+                                      "--plane", "cor", "--output", str(self.root / "z_cor.png")])
+        self.assertEqual(rc, GeometryError.exit_code)
+
     def test_lung_bounds_and_mpr_positions_follow_the_body(self):
         # 40 slices: 0-11 solid "neck", 12-27 hold enclosed air (lung), 28-39 solid "abdomen"
         def lungs(ds):

@@ -23,6 +23,9 @@ All notable changes to this project are documented here. The format follows
   ≤ 20 sheets per vision request; coronal zoom before calling a cardiophrenic "nodule".
 
 ### Fixed
+- `openrad zoom` refused every MR series whose axial reformat was not on the canonical LPS grid, even
+  for an in-plane crop; the gate now applies only to `--plane cor|sag`. MR zooms window by series
+  percentiles (`--pct`) instead of HU presets.
 - Slab-MIP sheets recorded only the slab centre as their source, so a `lung:mip` pass could never be
   completed (`check` reported hundreds of "unread" slices). Every slice inside the slab is now a source.
 - Reformat (MPR) sheets carried no provenance; `register` left their study/series empty and `check`

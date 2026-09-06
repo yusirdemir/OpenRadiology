@@ -63,6 +63,14 @@ Case-specific observations, source-report comparisons and images belong in the r
   not SUVpeak/SULpeak. Do not automatically assign formal response classifications.
 
 ## MR
+- MR axial reformats are rarely on the canonical LPS grid. An in-plane `zoom` needs no reformat, so the
+  orientation gate applies only to `--plane cor|sag`; before v0.4.1 every MR zoom was refused. MR zooms
+  window the whole series by percentiles (`--pct`), never by HU presets.
+- 3D T1/FLAIR volumes are read on their axial reformat series (all slices) with the native sagittal
+  volume `excluded` and the reason stated; the inventory labels reformats "unclassified" because TI is
+  not carried, so identify them from the source series (same TR/TE, later acquisition = post-contrast).
+- A 3D FLAIR shows bright partial-volume signal at the lateral-ventricle roofs and pulsation signal in
+  the ventricles; a zoom across neighbouring slices separates it from a periventricular lesion.
 - MR sequence names are hints. Per-slice normalization can mimic enhancement; use consistent series windows,
   compare anatomy, and check contrast metadata. Side-by-side images are not automatically registered.
 
