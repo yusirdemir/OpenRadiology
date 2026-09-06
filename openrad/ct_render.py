@@ -210,19 +210,19 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     if v.is_tilted:
         warn(f"tilt {v.tilt_info()}")
     written: List[Path] = []
-    scope: Dict[str, Dict[str, Any]] = {}
+    basis_parts: List[str] = []
     if a.auto_z == "lung":
         lo, hi = v.lung_z_bounds()
         a.zmin = lo if a.zmin is None else max(a.zmin, lo)
         a.zmax = hi if a.zmax is None else min(a.zmax, hi)
-        outside = [v.sop_uid(k) for k in range(len(v.z)) if not (a.zmin <= v.z[k] <= a.zmax)]
-        basis = (f"--auto-z lung: longest run of slices with >=0.5% enclosed air, padded 8 mm -> z {a.zmin:.1f}..{a.zmax:.1f} mm; "
-                 f"{len(outside)} of {len(v.z)} slices contain no aerated lung and were not rendered in this pass")
-        progress(f"auto-z lung: z {a.zmin:.1f}..{a.zmax:.1f} mm, {len(outside)} slices outside")
-        for wname in wnames:
-            scope[f"{wname}:native"] = {"zmin": a.zmin, "zmax": a.zmax, "basis": basis, "skipped_sops": outside}
-            if a.mip and wname == "lung":
-                scope[f"{wname}:mip"] = {"zmin": a.zmin, "zmax": a.zmax, "basis": basis, "skipped_sops": outside}
+        basis_parts.append(f"--auto-z lung: longest run of slices with >=0.5% enclosed air, padded 8 mm -> z {a.zmin:.1f}..{a.zmax:.1f} mm "
+                           f"(slices outside contain no aerated lung)")
+        progress(f"auto-z lung: z {a.zmin:.1f}..{a.zmax:.1f} mm")
+    elif a.zmin is not None or a.zmax is not None:
+        basis_parts.append(f"manual z range {a.zmin if a.zmin is not None else v.z.min():.1f}..{a.zmax if a.zmax is not None else v.z.max():.1f} mm")
+    if a.step > abs(v.dz) * 1.01:
+        basis_parts.append(f"--step {a.step:g} mm on {abs(v.dz):.2f} mm spacing: every {max(1, int(round(a.step / abs(v.dz))))}. slice rendered "
+                           f"(sampled pass; slices between were not shown)")
     for wname in wnames:
         if not a.no_axial:
             written += render_axial(v, a.output, prefix, wname, a.step, bbox, 0, a.zmin, a.zmax, a.grid, max_side)
@@ -232,10 +232,28 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             written += render_mpr(v, a.output, prefix, wname, bbox, a.mpr_n, a.mpr_thick, a.grid, max_side)
         if a.regions:
             written += render_regions(v, a.output, wname, a.step)
-    if scope:
-        index_path = a.output / "render_index.json"
-        index = json.loads(index_path.read_text()) if index_path.exists() else {}
-        index.setdefault("_scope", {}).update({k: dict(sc, study_uid=v.study_uid, series_uid=v.series_uid) for k, sc in scope.items()})
+    # Any axial pass that did not show every slice of the series records its scope: which SOPs were
+    # not rendered and why. `register` copies it to the series, `check` accepts exactly those SOPs,
+    # and `finish` prints the rule in the technique block. Reformat and region purposes are auxiliary.
+    index_path = a.output / "render_index.json"
+    if index_path.exists() and basis_parts:
+        index = json.loads(index_path.read_text())
+        rendered: Dict[str, set] = {}
+        for name, entry in index.items():
+            if name == "_scope":
+                continue
+            for src in entry.get("sources", []):
+                if src.get("series_uid") == v.series_uid and src.get("purpose", "").endswith((":native", ":mip")):
+                    rendered.setdefault(src["purpose"], set()).add(src["sop_uid"])
+        all_sops = [v.sop_uid(k) for k in range(len(v.z))]
+        basis = "; ".join(basis_parts)
+        for purpose, seen in rendered.items():
+            skipped = [u for u in all_sops if u not in seen]
+            if skipped:
+                index.setdefault("_scope", {})[purpose] = {
+                    "zmin": float(a.zmin) if a.zmin is not None else float(v.z.min()), "zmax": float(a.zmax) if a.zmax is not None else float(v.z.max()),
+                    "basis": f"{basis}; {len(skipped)} of {len(all_sops)} slices not rendered in this pass",
+                    "skipped_sops": skipped, "study_uid": v.study_uid, "series_uid": v.series_uid}
         save_json(index, index_path)
     for p in written:
         print(p)

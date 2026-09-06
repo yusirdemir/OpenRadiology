@@ -38,6 +38,7 @@ import hashlib
 import json
 import math
 from collections import defaultdict
+import os
 from pathlib import Path
 from typing import Any, Dict, Iterable, Iterator, List, Optional, Sequence, Tuple
 
@@ -79,9 +80,12 @@ def val(ds: pydicom.Dataset, key: str, default: Any = None) -> Any:
 
 
 def iter_dicom_files(root: Path) -> Iterator[Path]:
-    for p in sorted(root.rglob("*")):
-        if p.is_file() and not p.name.startswith("."):
-            yield p
+    root_str = str(root)
+    for dirpath, dirnames, filenames in os.walk(root_str, followlinks=True):
+        dirnames[:] = [d for d in dirnames if not d.startswith(".")]
+        for f in sorted(filenames):
+            if not f.startswith("."):
+                yield Path(dirpath) / f
 
 
 def read_headers(root: Path | str) -> List[Header]:
@@ -471,7 +475,7 @@ class Volume:
 
     def geometry_summary(self) -> Dict[str, Any]:
         return {"modality": self.modality, "series_number": self.series_number, "series_uid": self.series_uid,
-                "study_uid": self.study_uid, "frame_uid": self.frame_uid, "shape_zyx": list(self.vol.shape),
+                "study_uid": self.study_uid, "frame_uid": self.frame_uid, "origin_lps": self.ipp0, "shape_zyx": list(self.vol.shape),
                 "pixel_spacing_mm": [self.row_sp, self.col_sp], "slice_spacing_mm": self.dz,
                 "slice_thickness_mm": self.slice_thickness, "spacing_between_slices_tag": self.spacing_between_slices,
                 "plane": self.plane, "iop": self.iop, "z_range_mm": [float(self.z[0]), float(self.z[-1])],

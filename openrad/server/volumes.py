@@ -62,16 +62,14 @@ class HeaderCache:
     def get(self, root: Path) -> List[Header]:
         root = root.resolve()
         key = str(root)
-        signature = _signature(root)
         with self._lock:
             hit = self._entries.get(key)
-            if hit is not None and hit[0] == signature:
+            if hit is not None and len(hit[1]) > 0:
                 return hit[1]
-        if signature[0] == 0:
-            raise InputError(f"No DICOM files found under {root}")
         headers = read_headers(root)
         if not headers:
             raise InputError(f"No DICOM files found under {root}")
+        signature = _signature(root)
         with self._lock:
             self._entries[key] = (signature, headers)
         return headers

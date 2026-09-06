@@ -730,6 +730,14 @@ class CliTests(TempCase):
         self.assertFalse([e for e in errors if "unread/unrendered" in e], errors)
         se["pass_scope"]["lung:native"]["basis"] = ""
         self.assertTrue(any("stated basis" in e for e in validate(s, verify_files=False)))
+        # A sampled pass (--step above the native spacing) records the slices it skipped the same way.
+        out2 = session.parent / "soft"
+        rc, out, err = quiet(cli_main, ["ct-render", str(p), "--series", "1", "--output", str(out2), "--windows", "soft",
+                                        "--step", "3", "--grid", "3x3"])
+        self.assertEqual(rc, 0, err)
+        sc = json.loads((out2 / "render_index.json").read_text())["_scope"]["soft:native"]
+        self.assertEqual(len(sc["skipped_sops"]), 40 - len(range(0, 40, 3)))
+        self.assertIn("sampled pass", sc["basis"])
 
     def test_ct_render_grid_options(self):
         p = make_study(self.root, "a", gaps=tuple(range(10)))
