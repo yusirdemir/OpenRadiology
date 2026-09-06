@@ -29,6 +29,8 @@ hidden = [
     "openjpeg",
     # scipy submodules the engine reaches through lazy attributes.
     "scipy.ndimage",
+    "skimage.graph",
+    "skimage.graph._mcp",
     "scipy.spatial",
     "scipy.spatial.qhull",
 ]
